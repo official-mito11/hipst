@@ -1,12 +1,21 @@
 {
   "name": "hipst",
+  "version": "0.0.1",
+  "description": "fullstack framework",
+  "main": "index.ts",
   "module": "index.ts",
   "type": "module",
-  "private": true,
+  "author": "mito11",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "scripts": {
+    "start": "bun run index.ts"
   }
 }
