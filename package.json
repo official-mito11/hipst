@@ -18,5 +18,9 @@
     "start": "bun run index.ts",
     "build": "tsc",
     "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.38",
+    "csstype": "^3.1.3"
   }
 }
