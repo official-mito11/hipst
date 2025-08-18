@@ -1,4 +1,4 @@
-import type { Component } from "./component";
+import type { Component } from "./comp";
 
 export interface Context<C extends Component> {
     self: C;

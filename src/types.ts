@@ -1,0 +1,1 @@
+export type OptionalParam<T> = undefined extends T ? true : [T] extends [void] ? true : false;

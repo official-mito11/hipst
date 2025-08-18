@@ -1,7 +1,9 @@
-import { Context } from "../context";
-import type { UIComponent } from "./component";
+import type { UIComponent } from "./comp";
 
-export type UIContext<C extends UIComponent> = {
+export interface UIContext<C extends UIComponent> {
   self: C;
+  parent: C;
   state: C['state'];
+  styles: C['styles'];
+  attributes: C['attributes'];
 }
