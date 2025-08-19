@@ -27,11 +27,12 @@ bun run hipst serve \
 ## FE-only 풀 빌드 (정적)
 JS/CSS를 포함한 정적 HTML 산출물을 생성합니다.
 ```bash
-bun run hipst fe-build \
+bun run hipst build \
   --app examples/counter.app.ts#App \
   --csr examples/counter.client.ts \
   --out dist/counter-fe
 # dist/counter-fe/에 index.html, app.mjs(.map), app.css(.map)
+# 참고: fe-build는 build의 별칭입니다.
 ```
 
 ## 프로젝트에 통합하기

@@ -4,12 +4,16 @@ CSR 번들을 생성하고 SSR HTML에 자동 주입하여 완전한 정적 산�
 
 ## 명령어
 ```bash
-bun run hipst fe-build \
+bun run hipst build \
   --app <path/to/App[#Export]> \
   --csr <path/to/clientEntry> \
   --out dist/my-app \
   [--minify true|false] \
-  [--sourcemap external|inline|none]
+  [--sourcemap external|inline|none] \
+  [--codegen-api <path/to/api[#Export]>] \
+  [--codegen-out <file|dir>] \
+  [--codegen-base-url <url>]
+# 참고: fe-build는 build의 별칭입니다.
 ```
 
 - --app: `html()` 루트 컴포넌트가 있는 모듈 경로. export 미지정 시 default 또는 `App` 추정
@@ -17,6 +21,9 @@ bun run hipst fe-build \
 - --out: 출력 디렉토리 (기본 `dist/fe`)
 - --minify: 번들 압축 (기본 true)
 - --sourcemap: 소스맵 모드 (기본 external)
+- --codegen-api: API 루트에서 클라이언트 코드를 생성(선택)
+- --codegen-out: 생성 파일/디렉토리 경로
+- --codegen-base-url: 고정 baseUrl 헬퍼(`withBase`) 포함
 
 ## 산출물
 - `index.html`: SSR 결과 + CSR 스니펫 주입

@@ -2,8 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
-    "allowImportingTsExtensions": false,
-    "preserveShebang": true
+    "allowImportingTsExtensions": false
   },
   "include": ["index.ts", "src/**/*.ts"],
   "exclude": ["node_modules", "dist", "examples/**/*", "*.config.js"]

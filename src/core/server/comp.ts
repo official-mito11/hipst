@@ -253,6 +253,4 @@ export class Server extends Component {
   }
 }
 
-export function server(): Server {
-  return new Server();
-}
+export function server(): Server { return new Server() }

@@ -1,6 +1,7 @@
 import { renderToString } from "../../index";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { runCodegen } from "./codegen";
 
 function parseArgs(argv: string[]) {
   const out: Record<string, string | boolean> = {};
@@ -23,6 +24,9 @@ function parseArgs(argv: string[]) {
     csr?: string;
     minify?: string | boolean;
     sourcemap?: string;
+    "codegen-api"?: string;
+    "codegen-out"?: string;
+    "codegen-base-url"?: string;
   };
 }
 
@@ -54,7 +58,7 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
   const args = parseArgs(argv);
   const appArg = args.app;
   if (!appArg) {
-    console.error("Usage: hipst fe-build --app <path>[#export] [--csr <clientEntry>] [--out <dir>] [--minify true|false] [--sourcemap external|inline|none]");
+    console.error("Usage: hipst build --app <path>[#export] [--csr <clientEntry>] [--out <dir>] [--minify true|false] [--sourcemap external|inline|none] [--codegen-api <path>[#export]] [--codegen-out <file|dir>] [--codegen-base-url <url>]  (alias: fe-build)");
     process.exit(1);
   }
   const [appPathRaw, exportName] = String(appArg!).split("#") as [string, string?];
@@ -71,13 +75,28 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
   const outDir = resolve(process.cwd(), String(args.out || "dist/fe"));
   mkdirSync(outDir, { recursive: true });
 
+  // Optional: API client code generation
+  if (args["codegen-api"]) {
+    try {
+      const cgOut = await runCodegen({
+        api: String(args["codegen-api"]),
+        out: args["codegen-out"] ? String(args["codegen-out"]) : undefined,
+        baseUrl: args["codegen-base-url"] ? String(args["codegen-base-url"]) : undefined,
+      });
+      console.log("hipst build: codegen wrote", cgOut);
+    } catch (e) {
+      console.error("hipst build: codegen failed", e);
+      process.exitCode = 1;
+    }
+  }
+
   const csrEntry = args.csr ? resolve(process.cwd(), String(args.csr)) : undefined;
   if (csrEntry) {
     const sourcemap = (args.sourcemap ?? "external") as "external" | "inline" | "none";
     const minify = args.minify === undefined ? true : String(args.minify) !== "false";
     const out = await Bun.build({ entrypoints: [csrEntry], target: "browser", format: "esm", sourcemap: sourcemap as any, minify });
     if (!out.success) {
-      console.error("hipst fe-build: CSR build failed", out);
+      console.error("hipst build: CSR build failed", out);
     } else {
       let js: string | undefined;
       let css: string | undefined;
@@ -113,7 +132,7 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
   const htmlPath = resolve(outDir, "index.html");
   mkdirSync(dirname(htmlPath), { recursive: true });
   writeFileSync(htmlPath, html, "utf-8");
-  console.log(`hipst fe-build: wrote ${htmlPath}`);
+  console.log(`hipst build: wrote ${htmlPath}`);
 }
 
 if (import.meta.main) {

@@ -24,10 +24,10 @@ export const App = html()
     ui("button")
     .p(10)
     .onClick(async ({ parent }) => {
-      const data = await myApi.client.get({ query: { q: "great" } });
+      const data = await myApi.client.get({ query: { q: "gay" } });
       if (parent) parent.state.api = String(data ?? "");
     })
     ("Fetch API"),
-    ui("p")((c) => String(c.parent?.state.api ?? ""))
+    ui("p")(({ parent }) => String(parent?.state.api ?? ""))
   )
 );

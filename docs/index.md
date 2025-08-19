@@ -24,6 +24,7 @@ bun install
 - API: docs/api.md
 - UI DSL: docs/ui.md
 - API 클라이언트 코드생성: docs/codegen.md
+- 마이그레이션: docs/migration.md
 
 ## 예제
 - `examples/` 디렉토리 참고 (counter 예제 권장)
