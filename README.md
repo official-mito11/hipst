@@ -51,6 +51,64 @@ Generate a static HTML file (no server):
 bun run examples/static.ts
 # writes dist/static/index.html
 ```
+ 
+## SSR + CSR Bundling (Interactive)
+
+To serve SSR HTML with a bundled client runtime (JS + CSS) for interactivity:
+
+1) Server: enable CSR and route your App
+
+```ts
+import { server } from "hipst";
+import { App } from "./examples/counter.app.ts";
+
+server().csr("examples/counter.client.ts").route(App).listen(3000);
+```
+
+2) Client entry: mount and import styles (bundled automatically)
+
+```ts
+// examples/counter.client.ts
+import { mount } from "hipst";
+import { App } from "./counter.app.ts";
+import "./counter.css";
+mount(App, document.getElementById("__hipst_app__")!);
+```
+
+3) Client entry auto-detection (optional)
+
+If you omit the argument to `.csr()`, hipst will try to resolve a client entry automatically:
+
+- Preferred: set it in `package.json` under `hipst.client`:
+
+```json
+{
+  "hipst": {
+    "client": "examples/counter.client.ts"
+  }
+}
+```
+
+- Fallback: the first match of `**/*.client.{ts,tsx,js,jsx}` in your project.
+
+Run it:
+
+```bash
+bun run examples/counter.ts
+# HTML: http://localhost:3000/
+```
+
+When CSR is enabled, the server injects the following into SSR HTML and serves built assets:
+
+- <link rel="stylesheet" href="/_hipst/app.css">
+- <script type="module" src="/_hipst/app.mjs"></script>
+
+Assets are served at:
+- /_hipst/app.mjs
+- /_hipst/app.css
+- /_hipst/app.mjs.map
+
+The body content is wrapped in a container with id `__hipst_app__` that `mount(...)` attaches to.
 
 ## API Notes
 
@@ -72,7 +130,9 @@ const App = html()(
     (c => `Count: ${c.state.count ?? 0}`)
 );
 
-// initialize
+// initialize (typed)
+(App.nth(0)!).state({ count: 0 });
+// or
 (App.nth(0)!).state("count", 0);
 ```
 

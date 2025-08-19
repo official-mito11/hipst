@@ -1,0 +1,5 @@
+:root{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+*{box-sizing:border-box;}
+body{ margin:0; }
+#__hipst_app__{  }
+button{ padding:8px 12px; font-size:14px; cursor:pointer; }

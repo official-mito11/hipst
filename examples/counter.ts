@@ -1,22 +1,10 @@
-import { server } from "../src/core/server/comp";
-import { html, ui } from "../src/core/ui/factory";
+import { server } from "../index.ts";
+import { myApi } from "./counter.api.ts";
+import { App } from "./counter.app.ts";
 
-server().route(
-  html()
-  .title("Counter")
-  .meta("description", "Counter example")
-  (
-    ui("div")
-      .state("count", 0)
-      .flexCol()
-      (
-        ui("h1")("Counter"),
-        ui("p")("Welcome to counter example"),
-        ui("button")
-          .onClick(({ parent }) => {
-            if (parent) parent.state.count = (parent.state.count ?? 0) + 1;
-          })
-          (({ parent }) => "Count: " + (parent?.state.count ?? 0))
-      )
-  )
-).listen(3000);
+server()
+  .csr("examples/counter.client.ts")
+  .route(App)
+  .route(myApi)
+  .listen(3000);
+console.log("Counter example: http://localhost:3000");

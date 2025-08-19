@@ -26,11 +26,11 @@ function setStyle(el: HTMLElement, key: string, v: any) {
   style[key] = v;
 }
 
-function mountComponent(node: UIComponent, container: HTMLElement, root: UIComponent): HTMLElement {
-  node = unwrap(node) as UIComponent;
+function mountComponent(node: UIComponent<any, any>, container: HTMLElement, root: UIComponent<any, any>): HTMLElement {
+  node = unwrap(node) as UIComponent<any, any>;
   const el = document.createElement(node.tag);
 
-  const ctx: UIContext<UIComponent> = {
+  const ctx: UIContext<UIComponent<any, any>> = {
     self: node,
     parent: node.parent,
     root,
@@ -59,11 +59,11 @@ function mountComponent(node: UIComponent, container: HTMLElement, root: UICompo
   }
 
   // events
-  const events: Record<string, Array<(c: UIContext<any>, ev?: any) => any>> = (node as any)._events ?? {};
+  const events: Record<string, Array<(c: UIContext<UIComponent<any, any>>, ev?: any) => any>> = (node as any)._events ?? {};
   for (const [evt, fns] of Object.entries(events)) {
     if (!Array.isArray(fns)) continue;
-    el.addEventListener(evt, (ev) => {
-      const callCtx: UIContext<UIComponent> = {
+    el.addEventListener(evt, (ev: Event) => {
+      const callCtx: UIContext<UIComponent<any, any>> = {
         self: node,
         parent: node.parent,
         root,
@@ -97,12 +97,14 @@ function mountComponent(node: UIComponent, container: HTMLElement, root: UICompo
   return el;
 }
 
-export function mount(rootNode: HtmlRoot | UIComponent, container: HTMLElement) {
-  const maybe = unwrap(rootNode) as HtmlRoot | UIComponent;
+export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTMLElement) {
+  // Clear SSR content before mounting to avoid duplicate DOM
+  while (container.firstChild) container.removeChild(container.firstChild);
+  const maybe = unwrap(rootNode) as HtmlRoot | UIComponent<any, any>;
   if (maybe instanceof HtmlRoot) {
     // Head management (title/meta)
     const r = maybe as HtmlRoot;
-    const ctx: UIContext<any> = {
+    const ctx: UIContext<HtmlRoot> = {
       self: r,
       parent: undefined,
       root: r,
@@ -135,5 +137,5 @@ export function mount(rootNode: HtmlRoot | UIComponent, container: HTMLElement) 
     return;
   }
   const realRoot = (maybe as any).root ?? maybe;
-  mountComponent(maybe, container, realRoot as UIComponent);
+  mountComponent(maybe, container, realRoot as UIComponent<any, any>);
 }

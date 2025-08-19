@@ -1,5 +1,5 @@
 import { toCallable } from "../util";
-import { UIComponent } from "./comp";
+import { UIComponent, type WithCallable } from "./comp";
 import type { UIContext } from "./context";
 import type { ValueOrFn } from "../context";
 
@@ -35,7 +35,7 @@ function flatten<T>(arr: T[]): T[] {
   return out;
 }
 
-export function ui<Tag extends string>(tag: Tag): UIComponent<Tag> & ((...children: any[]) => UIComponent<Tag>) {
+export function ui<Tag extends string>(tag: Tag): WithCallable<UIComponent<Tag>> {
   const base = new UIComponent<Tag>(tag);
   const callable = toCallable<UIComponent<Tag>, any[], UIComponent<Tag>>(base, (self, ...children: any[]) => {
     const kids = flatten(children);
@@ -47,7 +47,7 @@ export function ui<Tag extends string>(tag: Tag): UIComponent<Tag> & ((...childr
   return callable;
 }
 
-export function html(): HtmlRoot & ((...children: any[]) => HtmlRoot) {
+export function html(): WithCallable<HtmlRoot> {
   const base = new HtmlRoot();
   const callable = toCallable<HtmlRoot, any[], HtmlRoot>(base, (self, ...children: any[]) => {
     const kids = flatten(children);

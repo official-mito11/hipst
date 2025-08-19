@@ -17,7 +17,7 @@ function camelToKebab(s: string) {
   return s.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
 }
 
-function styleToString(comp: UIComponent, ctx: UIContext<UIComponent>): string {
+function styleToString(comp: UIComponent<any, any>, ctx: UIContext<UIComponent<any, any>>): string {
   const parts: string[] = [];
   for (const key of Object.keys(comp.styles) as any) {
     const raw = (comp as any)._stylesStore?.[key];
@@ -29,7 +29,7 @@ function styleToString(comp: UIComponent, ctx: UIContext<UIComponent>): string {
   return parts.join(";");
 }
 
-function attrsToString(comp: UIComponent, ctx: UIContext<UIComponent>): string {
+function attrsToString(comp: UIComponent<any, any>, ctx: UIContext<UIComponent<any, any>>): string {
   const parts: string[] = [];
   const attrs = (comp as any)._attrsStore ?? {};
   for (const [k, raw] of Object.entries(attrs)) {
@@ -43,12 +43,12 @@ function attrsToString(comp: UIComponent, ctx: UIContext<UIComponent>): string {
   return parts.join(" ");
 }
 
-function renderNode(node: UIComponent, root: UIComponent): string {
+function renderNode(node: UIComponent<any, any>, root: UIComponent<any, any>): string {
   // Ensure we operate on real component instances, not callable proxies
   node = unwrap(node) as UIComponent;
   root = unwrap(root) as UIComponent;
   // Build a stable state facade that reads directly from the node's state store
-  let ctx: UIContext<UIComponent>;
+  let ctx: UIContext<UIComponent<any, any>>;
   const stateFacade: any = new Proxy(function () {}, {
     get(_t, prop: any) {
       if (typeof prop !== "string") return undefined;
@@ -88,11 +88,11 @@ function renderNode(node: UIComponent, root: UIComponent): string {
   return `${open}${inner}${close}`;
 }
 
-export function renderToString(root: HtmlRoot | UIComponent): string {
-  const maybe = unwrap(root) as HtmlRoot | UIComponent;
+export function renderToString(root: HtmlRoot | UIComponent<any, any>): string {
+  const maybe = unwrap(root) as HtmlRoot | UIComponent<any, any>;
   if (maybe instanceof HtmlRoot) {
     const r = maybe as HtmlRoot;
-    let ctx: UIContext<any>;
+    let ctx: UIContext<HtmlRoot>;
     const stateFacade: any = new Proxy(function () {}, {
       get(_t, prop: any) {
         if (typeof prop !== "string") return undefined;
@@ -117,7 +117,7 @@ export function renderToString(root: HtmlRoot | UIComponent): string {
       state: stateFacade,
       styles: (r as any).styles,
       attributes: (r as any).attributes,
-    };
+    } as UIContext<HtmlRoot>;
     const title = (r as any).headTitle
       ? String(resolveValue(ctx, (r as any).headTitle as any))
       : "";
@@ -136,7 +136,7 @@ export function renderToString(root: HtmlRoot | UIComponent): string {
     }
     return `<!doctype html><html><head>${title ? `<title>${esc(title)}</title>` : ""}${metas.join("")}</head><body>${body}</body></html>`;
   }
-  const top = maybe;
+  const top = maybe as UIComponent<any, any>;
   const realRoot = (maybe as any).root ?? maybe;
-  return renderNode(top, realRoot);
+  return renderNode(top, realRoot as UIComponent<any, any>);
 }
