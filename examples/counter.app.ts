@@ -12,9 +12,12 @@ export const App = html()
     ui("h1")("Counter"),
     ui("p")("Welcome to counter example"),
     ui("button")
-    .onClick(({ parent }) => {
+    .state("count", 10)
+    .p(({self})=> self.state.count)
+    .onClick(({ parent, self }) => {
       if (parent) parent.state.tiny = (parent.state.tiny ?? "tiny") + " tiny";
+      self.state.count = self.state.count / 2;
     })
-    (({parent}) => `hyunho has ${parent?.state.tiny} dick`)
+    (({parent, self}) => `hyunho has ${parent?.state.tiny} dick (${self.state.count}cm)`)
   )
 );

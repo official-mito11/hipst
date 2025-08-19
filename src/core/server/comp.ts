@@ -155,7 +155,7 @@ export class Server extends Component {
     });
   }
 
-  listen(port: number) {
+  listen(port: number, cb?: (server: Bun.Server) => void) {
     this._server = Bun.serve({
       port: port,
       fetch: async (req) => {
@@ -249,6 +249,7 @@ export class Server extends Component {
         return new Response("Not Found", { status: 404 });
       },
     });
+    cb?.(this._server);
   }
 }
 

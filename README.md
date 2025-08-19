@@ -1,5 +1,7 @@
 # hipst
 
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-Explore-blue)](https://deepwiki.com/official-mito11/hipst)
+
 To install dependencies:
 
 ```bash

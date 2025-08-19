@@ -11,15 +11,12 @@ type CSSProperties = CSSProps<string | number>;
 
 // A callable component where children value functions receive a context
 // whose parent is the concrete component type `C`.
-export type WithCallable<C extends UIComponent<any, any>, P = C> = C & ((
+export type WithCallable<C extends UIComponent<any, any>, P = UIComponent<any, any>> = C & ((
   ...children: Array<
     | string
     | UIComponent<any, any>
-    | ValueOrFn<
-        string,
-        Omit<import("./context").UIContext<UIComponent<any, any>>, "parent"> & { parent?: P }
-      >
-    >
+    | ValueOrFn<string, { self: C; parent?: P }>
+  >
 ) => C);
 
 type StateProps<S extends object> = { [K in keyof S]: S[K] };
@@ -84,7 +81,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
     ...kids: Array<
       | string
       | UIComponent<any, any>
-      | ValueOrFn<string, import("./context").UIContext<UIComponent<any, any>> & { parent?: UIComponent<any, any> }>
+      | ValueOrFn<string, { self: UIComponent<any, any>; parent?: UIComponent<any, any> }>
     >
   ): this {
     for (const k of kids) {
@@ -152,6 +149,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
 
   // Common shorthands
   public id(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("id", v); }
+  public className(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("class", v); }
   // Simple attribute helpers (no conditional restrictions to avoid deep generic instantiation)
   public htmlFor(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("for", v as any); }
   public type(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("type", v as any); }
@@ -162,7 +160,16 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
   public flexDirection(v: ValueOrFn<CSSProperties["flexDirection"], UIContext<this, S>>): this { return this.style("flexDirection", v as any); }
   public flexCol(): this { return this.display("flex").flexDirection("column"); }
   public flexRow(): this { return this.display("flex").flexDirection("row"); }
-  public p(px: string | number): this { return this.style({ padding: typeof px === "number" ? `${px}px` : px }); }
+  public p(v: ValueOrFn<string | number, UIContext<this, S>>): this;
+  public p(px: string | number | ValueOrFn<string | number, UIContext<this, S>>): this {
+    if (typeof px === "function") {
+      return this.style("padding", (ctx: UIContext<this, S>) => {
+        const out = (px as (c: UIContext<this, S>) => string | number)(ctx);
+        return typeof out === "number" ? `${out}px` : out;
+      });
+    }
+    return this.style({ padding: typeof px === "number" ? `${px}px` : px });
+  }
   public m(px: string | number): this { return this.style({ margin: typeof px === "number" ? `${px}px` : px }); }
   public textCenter(): this { return this.style({ textAlign: "center" }); }
 
