@@ -2,28 +2,42 @@ import { HtmlRoot } from "./factory";
 import { UIComponent } from "./comp";
 import type { UIContext } from "./context";
 import { resolveValue } from "../context";
-import { effect } from "./reactive";
+import { effect, type Eff, stop } from "./reactive";
 import { unwrap } from "../util";
 
+const ATTR_CACHE = new WeakMap<HTMLElement, Map<string, any>>();
+const STYLE_CACHE = new WeakMap<HTMLElement, Map<string, any>>();
+const TEXT_CACHE = new WeakMap<Node, string>();
+const EFFECTS_SYM: unique symbol = Symbol.for("__hipst_effects__");
+
+function regEffect(node: Node, e: Eff) {
+  const anyNode = node as any;
+  let set: Set<Eff> = anyNode[EFFECTS_SYM];
+  if (!set) anyNode[EFFECTS_SYM] = set = new Set<Eff>();
+  set.add(e);
+}
+
 function setAttr(el: HTMLElement, name: string, v: any) {
-  if (v === undefined || v === null || v === false) {
-    el.removeAttribute(name);
-    return;
-  }
-  if (v === true) {
-    el.setAttribute(name, "");
-    return;
-  }
-  el.setAttribute(name, String(v));
+  let val: string | null;
+  if (v === undefined || v === null || v === false) val = null;
+  else if (v === true) val = "";
+  else val = String(v);
+  const cache = ATTR_CACHE.get(el) || (ATTR_CACHE.set(el, new Map()), ATTR_CACHE.get(el)!);
+  const prev = cache.get(name);
+  if (prev === val) return;
+  cache.set(name, val);
+  if (val === null) el.removeAttribute(name);
+  else el.setAttribute(name, val);
 }
 
 function setStyle(el: HTMLElement, key: string, v: any) {
   const style = (el.style as any);
-  if (v === undefined || v === null || v === false) {
-    style[key] = "";
-    return;
-  }
-  style[key] = v;
+  const next = (v === undefined || v === null || v === false) ? "" : v;
+  const cache = STYLE_CACHE.get(el) || (STYLE_CACHE.set(el, new Map()), STYLE_CACHE.get(el)!);
+  const prev = cache.get(key);
+  if (prev === next) return;
+  cache.set(key, next);
+  style[key] = next;
 }
 
 function mountComponent(node: UIComponent<any, any>, container: HTMLElement, root: UIComponent<any, any>): HTMLElement {
@@ -42,20 +56,21 @@ function mountComponent(node: UIComponent<any, any>, container: HTMLElement, roo
   // attributes
   const rawAttrs = (node as any)._attrsStore ?? {};
   for (const [name, raw] of Object.entries(rawAttrs)) {
-    effect(() => {
+    const runner = effect(() => {
       const v = resolveValue(ctx, raw as any);
       setAttr(el, name, v);
     });
+    regEffect(el, runner);
   }
 
   // styles
   const rawStyles = (node as any)._stylesStore ?? {};
   for (const key of Object.keys(rawStyles)) {
-    effect(() => {
+    const runner = effect(() => {
       const v = resolveValue(ctx, (rawStyles as any)[key]);
-      // convert camelCase to kebab for CSSOM property names if necessary
       setStyle(el, key, v);
     });
+    regEffect(el, runner);
   }
 
   // events
@@ -84,10 +99,16 @@ function mountComponent(node: UIComponent<any, any>, container: HTMLElement, roo
     } else if (typeof child === "function") {
       const text = document.createTextNode("");
       el.appendChild(text);
-      effect(() => {
+      const runner = effect(() => {
         const v = (child as any)(ctx);
-        text.data = String(v ?? "");
+        const s = String(v ?? "");
+        const prev = TEXT_CACHE.get(text);
+        if (prev !== s) {
+          TEXT_CACHE.set(text, s);
+          text.data = s;
+        }
       });
+      regEffect(text, runner);
     } else {
       el.appendChild(document.createTextNode(String(child)));
     }
@@ -97,9 +118,24 @@ function mountComponent(node: UIComponent<any, any>, container: HTMLElement, roo
   return el;
 }
 
+function cleanupSubtree(node: Node) {
+  const effs: Set<Eff> | undefined = (node as any)[EFFECTS_SYM];
+  if (effs) {
+    for (const e of effs) stop(e);
+    (node as any)[EFFECTS_SYM] = undefined;
+  }
+  if ((node as Element).childNodes) {
+    const kids = (node as Element).childNodes;
+    for (let i = 0; i < kids.length; i++) cleanupSubtree(kids[i]!);
+  }
+}
+
 export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTMLElement) {
-  // Clear SSR content before mounting to avoid duplicate DOM
-  while (container.firstChild) container.removeChild(container.firstChild);
+  // Clear SSR/previous hipst content before mounting to avoid duplicate DOM and leak effects
+  while (container.firstChild) {
+    cleanupSubtree(container.firstChild);
+    container.removeChild(container.firstChild);
+  }
   const maybe = unwrap(rootNode) as HtmlRoot | UIComponent<any, any>;
   if (maybe instanceof HtmlRoot) {
     // Head management (title/meta)
@@ -126,10 +162,16 @@ export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTM
       else if (typeof c === "function") {
         const text = document.createTextNode("");
         container.appendChild(text);
-        effect(() => {
+        const runner = effect(() => {
           const v = (c as any)(ctx);
-          text.data = String(v ?? "");
+          const s = String(v ?? "");
+          const prev = TEXT_CACHE.get(text);
+          if (prev !== s) {
+            TEXT_CACHE.set(text, s);
+            text.data = s;
+          }
         });
+        regEffect(text, runner);
       } else {
         container.appendChild(document.createTextNode(String(c)));
       }

@@ -28,7 +28,7 @@ Context는 Component 타입/역할에 따라 받는 속성도 달라.
 
 예상 워크플로우 시나리오
 ```typescript
-import { route, server, html, ui } from 'hipst'
+import { api, server, html, ui } from 'hipst'
 import { db } from './db'
 
 const VStack = ui('div')

@@ -53,7 +53,26 @@ Generate a static HTML file (no server):
 bun run examples/static.ts
 # writes dist/static/index.html
 ```
- 
+
+## FE-only Full Build (HTML + JS + CSS)
+
+Bundle a client entry and inject it into the SSR HTML for a fully static, interactive build (outputs HTML/JS/CSS/maps):
+
+```bash
+# Generic CLI
+bun run fe:build --app <path-to-app>[#ExportName] --csr <path-to-client-entry> --out dist/my-app
+
+# Example (counter)
+bun run example:fe:counter
+# writes dist/counter-fe/index.html, app.mjs, app.mjs.map, app.css
+```
+
+Notes:
+
+- `--app` should point to your `html()` root module and optional export name (defaults to default export or `App`).
+- `--csr` is the browser client entry (should call `mount(...)` and import any CSS).
+- `--out` output directory. Maps are emitted when available.
+
 ## SSR + CSR Bundling (Interactive)
 
 To serve SSR HTML with a bundled client runtime (JS + CSS) for interactivity:
@@ -111,6 +130,68 @@ Assets are served at:
 - /_hipst/app.mjs.map
 
 The body content is wrapped in a container with id `__hipst_app__` that `mount(...)` attaches to.
+
+## CLI (serve & fe-build)
+
+You can use the bundled CLI to run a server or produce a FE-only build.
+
+From source (no install):
+
+```bash
+# Serve SSR + CSR + API
+bun run hipst serve \
+  --ui examples/counter.app.ts#App \
+  --api examples/counter.api.ts#myApi \
+  --csr examples/counter.client.ts \
+  --port 3000
+
+# FE-only full build (HTML + JS + CSS + maps)
+bun run hipst fe-build \
+  --app examples/counter.app.ts#App \
+  --csr examples/counter.client.ts \
+  --out dist/counter-fe
+```
+
+When installed as a package (bin):
+
+```bash
+# after publishing or linking, the `hipst` bin is available
+hipst serve --ui path/to/App#Export --api path/to/api#Export --csr path/to/client.ts --port 3000
+hipst fe-build --app path/to/App#Export --csr path/to/client.ts --out dist/app
+```
+
+Notes:
+
+- `--ui` accepts `path[#ExportName]` where the default export or `App` is used if `#ExportName` is omitted.
+- `--api` accepts `path[#ExportName]` where the default export is used if omitted.
+- `--csr` is optional for `serve()`; if omitted, the server attempts to auto-detect a `**/*.client.{ts,tsx,js,jsx}` entry or `package.json: { "hipst": { "client": "..." } }`.
+- `fe-build` always requires `--app`, and `--csr` is recommended for interactivity.
+
+## API Client Codegen
+
+Generate a fetch-based client from an `ApiComponent` tree:
+
+```bash
+# Generic CLI
+bun run api:codegen --api <path-to-api>[#ExportName] --out dist/client/myapi.client.ts
+
+# Example (counter)
+bun run api:codegen:counter
+# writes dist/client/counter.client.ts
+```
+
+Usage example (generated names are METHOD_path):
+
+```ts
+import { GET_hyunho } from "./dist/client/counter.client.ts";
+
+const data = await GET_hyunho({ query: { q: "123" } });
+```
+
+Options:
+
+- `--baseUrl` adds a small `withBase(baseUrl)` helper wrapper.
+- You can pass `RequestInit` and `{ baseUrl, fetchImpl }` to each call for customization.
 
 ## API Notes
 

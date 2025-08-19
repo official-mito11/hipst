@@ -10,6 +10,9 @@
   "license": "MIT",
   "keywords": ["fullstack", "framework"],
   "files": ["dist"],
+  "bin": {
+    "hipst": "dist/src/cli/hipst.js"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.9.2"
@@ -18,10 +21,16 @@
     "start": "bun run index.ts",
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "bun run build",
+    "hipst": "bun run src/cli/hipst.ts",
     "example:basic": "bun run examples/basic.ts",
     "example:counter": "bun run examples/counter.ts",
     "example:static": "bun run examples/static.ts",
-    "dev:counter": "bun --hot examples/counter.ts"
+    "dev:counter": "bun --hot examples/counter.ts",
+    "serve:counter": "bun run hipst serve --ui examples/counter.app.ts#App --api examples/counter.api.ts#myApi --csr examples/counter.client.ts --port 3000",
+    "fe:build": "bun run hipst fe-build",
+    "example:fe:counter": "bun run hipst fe-build --app examples/counter.app.ts#App --csr examples/counter.client.ts --out dist/counter-fe",
+    "api:codegen": "bun run scripts/api-codegen.ts",
+    "api:codegen:counter": "bun run scripts/api-codegen.ts --api examples/counter.api.ts#myApi --out dist/client/counter.client.ts"
   },
   "dependencies": {
     "csstype": "^3.1.3"

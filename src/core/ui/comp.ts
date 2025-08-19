@@ -150,6 +150,30 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
   // Common shorthands
   public id(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("id", v); }
   public className(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("class", v); }
+  /**
+   * Alias for setting class attribute. Prefer using classes()/class() for class-first styling.
+   */
+  public class(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("class", v); }
+  /**
+   * Apply classes from string | string[] | Record<string, boolean>.
+   * Example:
+   *  .classes(["btn", ({state})=> state.on && "on"]) or .classes({ btn: true, on: ({state})=> state.on })
+   */
+  public classes(v: ValueOrFn<string | string[] | Record<string, any>, UIContext<this, S>>): this {
+    return this.attr("class", (ctx: UIContext<this, S>) => {
+      const raw = typeof v === "function" ? (v as any)(ctx) : v;
+      if (Array.isArray(raw)) return raw.filter(Boolean).map(String).join(" ");
+      if (raw && typeof raw === "object") {
+        const out: string[] = [];
+        for (const [k, val] of Object.entries(raw)) {
+          const vv = typeof val === "function" ? (val as any)(ctx) : val;
+          if (vv) out.push(k);
+        }
+        return out.join(" ");
+      }
+      return String(raw ?? "");
+    });
+  }
   // Simple attribute helpers (no conditional restrictions to avoid deep generic instantiation)
   public htmlFor(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("for", v as any); }
   public type(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("type", v as any); }
