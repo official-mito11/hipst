@@ -44,6 +44,8 @@ export function toCallable<T extends object, A extends any[], R = T>(
       }
       const v = (target as any)[prop];
       if (typeof v === "function") {
+        // Respect opt-out for wrapping (e.g., state facade proxy)
+        if ((v as any)?.__hipst_no_wrap__) return v;
         return (...args: unknown[]) => {
           const out = v.apply(target, args);
           return out === target ? receiver : out;

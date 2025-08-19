@@ -3,7 +3,7 @@ import { UIComponent } from "./comp";
 import type { UIContext } from "./context";
 import type { ValueOrFn } from "../context";
 
-export class HtmlRoot extends UIComponent {
+export class HtmlRoot extends UIComponent<"__html_root__"> {
   private _title?: ValueOrFn<string, UIContext<this>>;
   private _metas: Record<string, ValueOrFn<string, UIContext<this>>> = {};
 
@@ -35,22 +35,25 @@ function flatten<T>(arr: T[]): T[] {
   return out;
 }
 
-export function ui<Tag extends string>(tag: Tag) {
-  const base = new UIComponent(tag);
-  const callable = toCallable(base, (self, ...children: any[]) => {
+export function ui<Tag extends string>(tag: Tag): UIComponent<Tag> & ((...children: any[]) => UIComponent<Tag>) {
+  const base = new UIComponent<Tag>(tag);
+  const callable = toCallable<UIComponent<Tag>, any[], UIComponent<Tag>>(base, (self, ...children: any[]) => {
     const kids = flatten(children);
-    (self as UIComponent).append(...kids as any);
+    (self as UIComponent<any>).append(...kids as any);
     return self;
   });
+  // keep a back ref for methods that need to return the callable proxy (e.g., state facade)
+  (base as any).__hipst_callable__ = callable;
   return callable;
 }
 
-export function html() {
+export function html(): HtmlRoot & ((...children: any[]) => HtmlRoot) {
   const base = new HtmlRoot();
-  const callable = toCallable(base, (self, ...children: any[]) => {
+  const callable = toCallable<HtmlRoot, any[], HtmlRoot>(base, (self, ...children: any[]) => {
     const kids = flatten(children);
-    (self as UIComponent).append(...kids as any);
+    (self as UIComponent<any>).append(...kids as any);
     return self;
   });
+  (base as any).__hipst_callable__ = callable;
   return callable;
 }

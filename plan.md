@@ -7,9 +7,11 @@ hipst 프로젝트는 차세대 통합 웹 풀스택 프레임워크야.
 보일러플레이트를 최대한 줄이고 동일한 방법이 있을때, 한자라도 줄이고 직관적인 문법을 목표로 해.
 예) .style("display", "flex") -> .display("flex") -> .flexCol()
     .attribute("value", "something") -> .value("somthing")
-코드에는 사용 예시를 포함한 개발자 친화적 주석을 달아놔.
+코드에는 사용 예시를 포함한 라이브러리 사용자 개발자를 위한 주석을 달아놔.
+또한 해당 로직을 통하여 확장하기 위한 설명 주석도 달아놔.
 style은 최대한 css class를 사용하여 최적화 해야해.
 FE만 build할 수 있고, 통합 server로도 build할 수 있어.
+fe html 최종적인 build는 html, bundle js, css 파일 3개가 나와야해. (필요하다면 source map도 포함)
 server config에서 SSR, CSR 선택 가능하지만 Default는 SSR이야.
 **Component의 method나 Context에 대한 타입 추론은 정밀하게 IDE에서 별도의 플러그인 없이 순수 typescript만으로 지원해야해** (되도록 any를 사용하지 말 것)
 
@@ -136,4 +138,4 @@ const app = new server()
 .listen(3000)
 ```
 
-현재 구현된 core component, context 구조를 계승/개선하면서 해당 기능과 아키텍쳐를 구현하기 위해 확장 가능한 core component를 설계하고 해당 기능들을 구현해줘.
+현재 구현된 로직을 계승하여 플랜에 적합한지 검증 후, 코드 리팩터 & 추가개발을 진행해.

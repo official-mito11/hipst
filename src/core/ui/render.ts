@@ -47,11 +47,30 @@ function renderNode(node: UIComponent, root: UIComponent): string {
   // Ensure we operate on real component instances, not callable proxies
   node = unwrap(node) as UIComponent;
   root = unwrap(root) as UIComponent;
-  const ctx: UIContext<UIComponent> = {
+  // Build a stable state facade that reads directly from the node's state store
+  let ctx: UIContext<UIComponent>;
+  const stateFacade: any = new Proxy(function () {}, {
+    get(_t, prop: any) {
+      if (typeof prop !== "string") return undefined;
+      const raw = (node as any)._stateStore?.[prop];
+      return resolveValue(ctx as any, raw as any);
+    },
+    set(_t, prop: any, value: any) {
+      if (typeof prop !== "string") return false;
+      ((node as any)._stateStore ||= {})[prop] = value;
+      return true;
+    },
+    apply(_t, _thisArg, args: any[]) {
+      const [key, value] = args as [string, any];
+      ((node as any)._stateStore ||= {})[key] = value;
+      return node as any;
+    },
+  });
+  ctx = {
     self: node,
     parent: node.parent,
     root,
-    state: node["state"],
+    state: stateFacade,
     styles: node["styles"],
     attributes: node["attributes"],
   } as any;
@@ -73,11 +92,29 @@ export function renderToString(root: HtmlRoot | UIComponent): string {
   const maybe = unwrap(root) as HtmlRoot | UIComponent;
   if (maybe instanceof HtmlRoot) {
     const r = maybe as HtmlRoot;
-    const ctx: UIContext<any> = {
+    let ctx: UIContext<any>;
+    const stateFacade: any = new Proxy(function () {}, {
+      get(_t, prop: any) {
+        if (typeof prop !== "string") return undefined;
+        const raw = (r as any)._stateStore?.[prop];
+        return resolveValue(ctx as any, raw as any);
+      },
+      set(_t, prop: any, value: any) {
+        if (typeof prop !== "string") return false;
+        ((r as any)._stateStore ||= {})[prop] = value;
+        return true;
+      },
+      apply(_t, _thisArg, args: any[]) {
+        const [key, value] = args as [string, any];
+        ((r as any)._stateStore ||= {})[key] = value;
+        return r as any;
+      },
+    });
+    ctx = {
       self: r,
       parent: undefined,
       root: r,
-      state: (r as any).state,
+      state: stateFacade,
       styles: (r as any).styles,
       attributes: (r as any).attributes,
     };

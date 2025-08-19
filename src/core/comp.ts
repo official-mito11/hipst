@@ -7,6 +7,8 @@ export class Component {
       get(target, prop, receiver) {
         const original = Reflect.get(target, prop, receiver);
         if (typeof original === "function") {
+          // Respect special callable proxies that should not be wrapped
+          if ((original as any)?.__hipst_no_wrap__) return original;
           return (...args: unknown[]) => {
             const result = original.apply(target, args);
             return result === target ? receiver : result;

@@ -60,6 +60,33 @@ bun run examples/static.ts
 - **UI**: `ui(tag)` and `html()` return fluent, chainable components: `.flexCol().p(16).textCenter()` etc.
 - **Dynamic values**: any chained value can be a function of context, e.g. `.p((c) => c.state.padding)`.
 
+## Reactivity & CSR
+
+- **State** is a Proxy-based, callable facade. Initialize via function-call, then read/write via properties:
+
+```ts
+const App = html()(
+  ui("button")
+    .p(12)
+    .onClick((c) => (c.state.count = (c.state.count ?? 0) + 1))
+    (c => `Count: ${c.state.count ?? 0}`)
+);
+
+// initialize
+(App.nth(0)!).state("count", 0);
+```
+
+- There is no `.stateSet(...)` helper; use the state property setter: `c.state.foo = 123`.
+- For client-side reactivity, mount in the browser:
+
+```ts
+import { mount } from "hipst";
+// ... define App as above
+mount(App, document.getElementById("app")!);
+```
+
+> Note: SSR renders HTML by default. CSR mounting requires loading your app bundle in the browser and calling `mount(...)`. Hydration support can be added next.
+
 ## Migration
 
 - `ApiComponent.handle(req, url)` was renamed to `dispatch(req, url)` to avoid conflict with `Component.handle()`.
