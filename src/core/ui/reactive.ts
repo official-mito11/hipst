@@ -1,7 +1,8 @@
 // Lightweight fine-grained reactivity (track/trigger/effect)
 // Inspired by Vue/Solid patterns, minimal and framework-agnostic
 
-export type Eff = (() => void) & { __deps?: Set<Set<Eff>>; __stopped?: true };
+type DepRef = { depsMap: Map<PropertyKey, Set<Eff>>; key: PropertyKey; set: Set<Eff> };
+export type Eff = (() => void) & { __deps?: Set<DepRef>; __stopped?: true };
 let activeEffect: Eff | null = null;
 
 const bucket = new WeakMap<object, Map<PropertyKey, Set<Eff>>>();
@@ -9,7 +10,10 @@ const bucket = new WeakMap<object, Map<PropertyKey, Set<Eff>>>();
 function cleanup(eff: Eff) {
   const deps = eff.__deps;
   if (!deps) return;
-  for (const dep of deps) dep.delete(eff);
+  for (const ref of deps) {
+    ref.set.delete(eff);
+    if (ref.set.size === 0) ref.depsMap.delete(ref.key);
+  }
   deps.clear();
 }
 
@@ -42,7 +46,7 @@ export function track(target: object, key: PropertyKey) {
   let dep = depsMap.get(key);
   if (!dep) depsMap.set(key, (dep = new Set()));
   dep.add(activeEffect);
-  (activeEffect.__deps ||= new Set()).add(dep);
+  (activeEffect.__deps ||= new Set()).add({ depsMap, key, set: dep });
 }
 
 export function trigger(target: object, key: PropertyKey) {

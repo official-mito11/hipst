@@ -284,31 +284,37 @@ if (el && Root) mount(Root, el);
         const headers = req.headers;
         // Build shared response helpers and parse body once for server-level middleware
         const { statusFn, headerFn, resFn } = createResponseKit();
+        const query: Record<string, string> = {};
+        url.searchParams.forEach((v, k) => (query[k] = v));
         let body: any = await parseBody(req, headers);
 
         // Run server-level middlewares
-        const locals: Record<string, any> = {};
-        const query: Record<string, string> = {};
-        url.searchParams.forEach((v, k) => (query[k] = v));
+        const locals: Record<string, any> = { statusFn, headerFn, resFn, query, body };
+        // Reuse a single context object across middleware calls
+        const mwCtx: any = {
+          ...locals,
+          req,
+          url,
+          query,
+          param: {},
+          header: headerFn,
+          status: statusFn,
+          res: resFn,
+          body,
+          headers,
+          next: undefined as any,
+        };
         const runServer = async (i: number): Promise<Finalish | undefined> => {
           if (i < this.middlewares.length) {
             const mw = this.middlewares[i]!;
-            return await mw({
-              ...(locals as any),
-              req,
-              url,
-              query,
-              param: {},
-              header: headerFn,
-              status: statusFn,
-              res: resFn,
-              body,
-              headers,
-              next: async (extra?: Record<string, any>) => {
-                if (extra && typeof extra === "object") Object.assign(locals, extra);
-                return await runServer(i + 1);
-              },
-            } as any);
+            mwCtx.next = async (extra?: Record<string, any>) => {
+              if (extra && typeof extra === "object") {
+                Object.assign(locals, extra);
+                Object.assign(mwCtx, extra);
+              }
+              return await runServer(i + 1);
+            };
+            return await mw(mwCtx);
           }
           return undefined;
         };

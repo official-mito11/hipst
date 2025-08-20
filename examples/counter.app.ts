@@ -1,5 +1,12 @@
-import { html, ui } from "../index.ts";
+import { html, ui, ValueOrFn, UIContext } from "../index.ts";
 import { myApi } from "./counter.api.ts";
+
+const VStack = ui('div')
+.flexCol()
+.state("rv", 1)
+.prop("r", (ctx, v?: string) => ctx.self.style("gap", v || "1rem"))
+
+VStack.r()
 
 export const App = html()
 .title("Counter")
@@ -22,8 +29,10 @@ export const App = html()
     })
     (({ parent, self }) => `Tiny: ${parent?.state.tiny} (count: ${self.state.count})`),
     ui("button")
+    .state("selfstate", 0)
     .p(10)
-    .onClick(async ({ parent }) => {
+    .onClick(async ({ parent, state }) => {
+      state.selfstate = state.selfstate + 1;
       const data = await myApi.client.get({ query: { q: "gay" } });
       if (parent) parent.state.api = String(data ?? "");
     })

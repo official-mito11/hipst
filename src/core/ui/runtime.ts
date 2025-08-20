@@ -49,6 +49,7 @@ function mountComponent(node: UIComponent<any, any>, container: HTMLElement, roo
     parent: node.parent,
     root,
     state: (node as any).state,
+    props: (node as any).props,
     styles: (node as any).styles,
     attributes: (node as any).attributes,
   } as any;
@@ -83,6 +84,7 @@ function mountComponent(node: UIComponent<any, any>, container: HTMLElement, roo
         parent: node.parent,
         root,
         state: (node as any).state,
+        props: (node as any).props,
         styles: (node as any).styles,
         attributes: (node as any).attributes,
       } as any;
@@ -132,6 +134,8 @@ function cleanupSubtree(node: Node) {
 
 export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTMLElement) {
   // Clear SSR/previous hipst content before mounting to avoid duplicate DOM and leak effects
+  // Clean up any effects registered on the container and its subtree
+  cleanupSubtree(container);
   while (container.firstChild) {
     cleanupSubtree(container.firstChild);
     container.removeChild(container.firstChild);
@@ -145,14 +149,19 @@ export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTM
       parent: undefined,
       root: r,
       state: (r as any).state,
+      props: (r as any).props,
       styles: (r as any).styles,
       attributes: (r as any).attributes,
     };
     const title = (r as any).headTitle;
-    if (title) effect(() => {
-      const v = resolveValue(ctx, title as any);
-      if (typeof document !== "undefined") document.title = String(v ?? "");
-    });
+    if (title) {
+      const runner = effect(() => {
+        const v = resolveValue(ctx, title as any);
+        if (typeof document !== "undefined") document.title = String(v ?? "");
+      });
+      // Register on container so it is cleaned up on next mount
+      regEffect(container, runner);
+    }
     // metas could be handled similarly if needed
 
     // Body children

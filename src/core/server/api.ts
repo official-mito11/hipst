@@ -29,6 +29,10 @@ export class ApiComponent<L extends object = {}> extends Component {
   private parent?: ApiComponent<any>;
   private middlewares: Array<Middleware<any, any>> = [];
   public readonly client: ApiClient;
+  // Perf caches (invalidated on mutations)
+  private _fullPatternCache?: string;
+  private _compiledCache?: ReturnType<typeof compilePath>;
+  private _mwChainCache?: Array<Middleware<any, any>>;
 
   constructor(basePath: string) {
     super();
@@ -36,14 +40,30 @@ export class ApiComponent<L extends object = {}> extends Component {
     this.client = createClientFacade(this as any);
   }
 
+  private invalidateCachesDeep(): void {
+    this._fullPatternCache = undefined;
+    this._compiledCache = undefined;
+    this._mwChainCache = undefined;
+    for (const ch of this.children) ch.invalidateCachesDeep();
+  }
+
+  private invalidateMwChainDeep(): void {
+    this._mwChainCache = undefined;
+    for (const ch of this.children) ch.invalidateMwChainDeep();
+  }
+
   route(child: ApiComponent<any>): this {
     child.parent = this;
     this.children.push(child);
+    // parent changed => child's pattern/chain depend on it
+    child.invalidateCachesDeep();
     return this;
   }
 
   use<Add extends object>(mw: Middleware<L, Add>): ApiComponent<L & Add> {
     this.middlewares.push(mw as any);
+    // adding middleware affects chain for self and descendants
+    this.invalidateMwChainDeep();
     return this as unknown as ApiComponent<L & Add>;
   }
 
@@ -59,17 +79,19 @@ export class ApiComponent<L extends object = {}> extends Component {
   delete(handler: Handler<L>): this { return this.on("DELETE", handler); }
 
   public fullPattern(): string {
+    if (this._fullPatternCache) return this._fullPatternCache;
     const parts: string[] = [];
     let p: ApiComponent<any> | undefined = this as any;
     const stack: string[] = [];
     while (p) { stack.push(p.basePath); p = p.parent; }
     for (let i = stack.length - 1; i >= 0; i--) parts.push(stack[i]!);
-    const joined = parts.join("");
-    return joined || "/";
+    const joined = parts.join("") || "/";
+    this._fullPatternCache = joined;
+    return joined;
   }
 
   match(pathname: string): { matched: boolean; params: Record<string, string> } {
-    const compiled = compilePath(this.fullPattern());
+    const compiled = this._compiledCache || (this._compiledCache = compilePath(this.fullPattern()));
     const m = compiled.regex.exec(pathname);
     if (!m) return { matched: false, params: {} };
     const params: Record<string, string> = {};
@@ -82,6 +104,7 @@ export class ApiComponent<L extends object = {}> extends Component {
   }
 
   private collectMiddlewares(): Array<Middleware<any, any>> {
+    if (this._mwChainCache) return this._mwChainCache;
     const chain: Array<Middleware<any, any>> = [];
     const stack: ApiComponent<any>[] = [];
     let p: ApiComponent<any> | undefined = this;
@@ -90,6 +113,7 @@ export class ApiComponent<L extends object = {}> extends Component {
       const n = stack[i]!;
       for (const mw of (n as any).middlewares as Array<Middleware<any, any>>) chain.push(mw);
     }
+    this._mwChainCache = chain;
     return chain;
   }
 
@@ -100,9 +124,15 @@ export class ApiComponent<L extends object = {}> extends Component {
     if (selfMatch.matched) {
       const handler = this.handlers[req.method as HttpMethod];
       if (handler) {
-        const { statusFn, headerFn, resFn } = createResponseKit();
-        const query: Record<string, string> = {};
-        url.searchParams.forEach((v, k) => (query[k] = v));
+        const { statusFn, headerFn, resFn } = (inheritedLocals && (inheritedLocals as any).statusFn && (inheritedLocals as any).headerFn)
+          ? { statusFn: (inheritedLocals as any).statusFn, headerFn: (inheritedLocals as any).headerFn, resFn: (inheritedLocals as any).resFn }
+          : createResponseKit();
+        const inheritedQuery = (inheritedLocals && (inheritedLocals as any).query) as Record<string, string> | undefined;
+        const query: Record<string, string> = inheritedQuery ? inheritedQuery : (() => {
+          const q: Record<string, string> = {};
+          url.searchParams.forEach((v, k) => (q[k] = v));
+          return q;
+        })();
         const headers = req.headers;
         let body: any = (inheritedLocals && (inheritedLocals as any).body !== undefined)
           ? (inheritedLocals as any).body
@@ -134,19 +164,20 @@ export class ApiComponent<L extends object = {}> extends Component {
 
         const chain = this.collectMiddlewares();
         const locals: Record<string, any> = { ...(inheritedLocals || {}) };
+        // Reuse one object per chain
+        const mwCtx: any = { ...mwBase, ...locals, next: undefined as any };
 
         const run = async (i: number): Promise<Finalish | undefined> => {
           if (i < chain.length) {
             const mw = chain[i]!;
-            const out = await mw({
-              ...(locals as any),
-              ...mwBase,
-              next: async (extra?: Record<string, any>) => {
-                if (extra && typeof extra === "object") Object.assign(locals, extra);
-                return await run(i + 1);
-              },
-            });
-            return out;
+            mwCtx.next = async (extra?: Record<string, any>) => {
+              if (extra && typeof extra === "object") {
+                Object.assign(locals, extra);
+                Object.assign(mwCtx, extra);
+              }
+              return await run(i + 1);
+            };
+            return await mw(mwCtx);
           }
           const finalCtx = { ...(locals as any), ...base } as any;
           return await handler(finalCtx);

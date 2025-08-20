@@ -1,10 +1,10 @@
 import type { OptionalParam } from "../types";
 import type { Component } from "./comp";
-import type { HandleFn } from "./context";
+import { resolveValue, type Context, type HandleFn, type ValueOrFn } from "./context";
 
 export type MethodType<S extends Component, T> = OptionalParam<T> extends true
-  ? <U extends S>(this: U, value?: T) => U
-  : <U extends S>(this: U, value: T) => U;
+  ? <U extends S>(this: U, value?: ValueOrFn<T, Context<U>>) => U
+  : <U extends S>(this: U, value: ValueOrFn<T, Context<U>>) => U;
 
 export function attachMethod<S extends Component, K extends string, T>(
   obj: S,
@@ -17,7 +17,11 @@ export function attachMethod<S extends Component, K extends string, T>(
     throw new Error(`Method ${name} already exists`);
   }
   Object.defineProperty(obj, name, {
-    value: (value: T) => fn({ self: obj }, value),
+    value: (value?: ValueOrFn<T, Context<S>>) => {
+      const ctx = { self: obj } as Context<S>;
+      const resolved = resolveValue(ctx, value as any);
+      return fn(ctx, resolved as T);
+    },
     writable: true,
     configurable: true,
     enumerable: false,

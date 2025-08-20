@@ -1,50 +1,31 @@
-# SSR + CSR
+# SSR and CSR
 
-hipst는 기본적으로 SSR(서버 사이드 렌더링) HTML을 제공합니다. UI 루트를 `server().route(App)`로 등록하면 CSR(클라이언트 사이드 상호작용)이 자동으로 활성화되어 JS/CSS 번들을 빌드하고 SSR HTML에 주입합니다.
+- SSR is the default. Rendering is handled by `renderToString()` for both `HtmlRoot` and `UIComponent` trees.
+- When CSR is enabled, the server or builder injects:
+  - `<link rel="stylesheet" href=".../app.css">` if CSS is present
+  - `<script type="module" src=".../app.mjs"></script>`
+- The body is wrapped in a mount container `#__hipst_app__` so the runtime can attach and update the DOM.
 
-## 사용법
-```ts
-import { server } from "hipst";
-import { App } from "../examples/counter.app";
+## Server-side CSR
 
-server()
-  .route(App) // UI 루트를 라우트하면 CSR 자동 활성화 (클라이언트 엔트리 자동 생성)
-  .listen(3000);
-```
+- Enable CSR explicitly with `server().csr()` or via auto synthesis `server().csrAutoFrom(<uiModule>, <export?>)`.
+- The server serves runtime assets from internal paths:
+  - `/_hipst/app.mjs` (wrapper)
+  - `/_hipst/app.entry.mjs` (UI module bundle)
+  - `/_hipst/runtime.mjs` (runtime bundle)
+  - `/_hipst/app.css` (concatenated from `HtmlRoot.css()`)
+  - optional source maps under `/_hipst/*.map`
+- CSR-only mode (`server().csrOnly()` or CLI `serve --csr`) replaces the SSR body with an empty container + script.
 
-### 선택: 엔트리 명시적으로 지정
-```ts
-server()
-  .csr("examples/counter.client.ts") // 자동 생성 대신 직접 지정 가능
-  .route(App)
-  .listen(3000);
-```
+## Build-time CSR
 
-### 스타일 포함 (선택)
-`html()` 루트에서 `.css(path)`를 선언하면 해당 CSS가 CSR 번들에 포함됩니다.
-```ts
-// examples/counter.app.ts
-import { html, ui } from "hipst";
+- `hipst build` produces:
+  - `index.html` with SSR markup (or empty body for `--client`)
+  - `app.mjs` wrapper that mounts the app on load
+  - `runtime.mjs`, `app.entry.mjs` and their source maps
+  - optional `app.css` if `HtmlRoot.css()` declared paths
+- Legacy explicit entry `--csr <entry>` builds a single bundle as `app.mjs` and injects it.
 
-export const App = html()
-  .title("Counter")
-  .css("examples/counter.css") // CSR 번들에 포함
-  (
-    ui("h1")("Hello")
-  );
-```
+## Runtime mount
 
-## 동작 개요
-- `server().route(App)` 호출 시 CSR이 자동 활성화되며, `App`이 있는 모듈에서 클라이언트 엔트리를 자동 생성/번들합니다.
-- `server().csr(path)`로 명시하면 해당 엔트리를 사용합니다.
-
-## 주입되는 자원
-- `<link rel="stylesheet" href="/_hipst/app.css">`
-- `<script type="module" src="/_hipst/app.mjs"></script>`
-
-서빙 경로:
-- `/_hipst/app.mjs`
-- `/_hipst/app.css`
-- `/_hipst/app.mjs.map`
-
-본문은 `id="__hipst_app__"` 컨테이너로 감싸지며, CSR에서 `mount(...)`가 해당 요소에 연결됩니다.
+- The client runtime `mount()` clears any SSR content under the container before mounting and registers reactive effects for attributes, styles, events, and text nodes.

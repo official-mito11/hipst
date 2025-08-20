@@ -10,11 +10,21 @@ export type StateCtx<S extends object = {}> = {
   <K extends string, V>(key: K, value: V): unknown;
 };
 
+// Lightweight props view used inside UIContext so handlers can read other prop values.
+// Values are resolved (ValueOrFn applied with current UIContext) on access.
+export type PropsCtx<P extends object = {}> = {
+  [K in keyof P]: P[K];
+} & { [key: string]: unknown };
+
 /**
  * UIContext represents the context in which a UIComponent is rendered.
  * It provides access to the component itself, its parent, root, state, styles, and attributes.
  */
-export interface UIContext<C extends UIComponent<any, any>, S extends object = C extends UIComponent<any, infer SS> ? SS : {}> {
+export interface UIContext<
+  C extends UIComponent<any, any, any>,
+  S extends object = C extends UIComponent<any, infer SS, any> ? SS : {},
+  P extends object = C extends UIComponent<any, any, infer PP> ? PP : {}
+> {
 
   /**
    * The component itself.
@@ -34,6 +44,12 @@ export interface UIContext<C extends UIComponent<any, any>, S extends object = C
    * The state of the component.
    */
   state: StateCtx<S>;
+
+  /**
+   * Dynamic prop bag set via UIComponent.prop(). Values are stored raw (ValueOrFn) and
+   * resolved on access; can be referenced from other prop handlers.
+   */
+  props: PropsCtx<P>;
 
   /**
    * The styles of the component.

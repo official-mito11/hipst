@@ -71,6 +71,7 @@ function renderNode(node: UIComponent<any, any>, root: UIComponent<any, any>): s
     parent: node.parent,
     root,
     state: stateFacade,
+    props: (node as any).props,
     styles: node["styles"],
     attributes: node["attributes"],
   } as any;
@@ -115,6 +116,7 @@ export function renderToString(root: HtmlRoot | UIComponent<any, any>): string {
       parent: undefined,
       root: r,
       state: stateFacade,
+      props: (r as any).props,
       styles: (r as any).styles,
       attributes: (r as any).attributes,
     } as UIContext<HtmlRoot>;

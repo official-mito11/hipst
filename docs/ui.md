@@ -1,68 +1,56 @@
 # UI DSL
 
-hipst의 UI는 체이닝 가능한 DSL로 정의합니다. `html()`은 페이지 루트, `ui(tag)`는 엘리먼트를 생성합니다.
+- Create elements with `ui(tag)` and the HTML root with `html()`.
+- Compose by calling the component as a function with children.
 
-## 기본 예시
 ```ts
 import { html, ui } from "hipst";
 
-export const App = html().title("Demo")(
-  ui("div").flexCol().p(16)(
-    ui("h1")("Hello"),
-    ui("button")
-      .state("count", 0)
-      .p(({ self }) => (self.state.count as number) * 2)
-      .onClick(({ self }) => { self.state.count = (self.state.count as number) + 1; })
-      (({ self }) => `Count: ${self.state.count}`),
-  ),
-);
+export const App = html()
+  .title("Title")
+  .meta("description", "desc")
+  (
+    ui("div").p(16).flexCol(
+      ui("h1")("Hello"),
+      ui("button")
+        .state("count", 0)
+        .onClick(({ self }) => { self.state.count++; })
+        (({ self }) => `Count: ${self.state.count}`)
+    )
+  );
 ```
 
-## 상태(state)
-- `state`는 함수이자 프록시입니다.
-  - 초기화: `state(key, value)` 또는 `state({ ... })`
-  - 읽기: `state.foo`
-  - 쓰기: `state.foo = 123` (반응형 트리거)
-- 타입 선언 도우미:
-  - `stateInit({ ... })`: 여러 키 초기화 + 타입 정제
-  - `typed<{ foo: number }>()`: 런타임 변경 없이 타입만 정제
-  - `parentTyped<{ ... }>()`: 자식에서 `parent.state` 타입 힌트
+## State
 
-## 스타일/속성
-- `style(key, value)` 또는 `style({ ... })`
-- 공통 단축어:
-  - `.p(16)`, `.m(8)`, `.flexCol()`, `.flexRow()`, `.textCenter()`
-  - `.class("btn")`, `.classes(["btn", ({ state }) => state.on && "on"])`
-  - `.id(...)`, `.htmlFor(...)`, `.type(...)`, `.checked(...)`, `.value(...)`
+- `state` is a callable facade and a reactive property bag:
+  - Initialize: `.state("key", value)` or `.state({ key: value })` via the callable.
+  - Read/write: `self.state.key` inside value functions and event handlers.
+  - Advanced typing helpers: `.stateInit(obj)`, `.typed<T>()`, `.parentTyped<T>()`.
 
-## 자식(children)
-- 문자열, 다른 `UIComponent`, 또는 `(ctx) => string` 함수 가능
-- `ctx`: `{ self, parent?, root?, state, styles, attributes }`
+## Attributes and styles
 
-## 이벤트
-- `.onClick((ctx, ev?) => { ... })`
-- 기타 이벤트는 추후 `.prop()`으로 확장 가능
+- Attributes: `.attr(name, value)` with values supporting `ValueOrFn` (`(ctx)=>...`).
+- Styles: `.style(key, value)` or `.style({ ... })` (typed via `csstype`).
+- Shorthands:
+  - `.id()`, `.className()`, `.class()`, `.classes()`
+  - `.htmlFor()`, `.type()`, `.checked()`, `.value()`
+  - `.display()`, `.flexDirection()`, `.flexCol()`, `.flexRow()`
+  - `.p()`, `.m()`, `.textCenter()`
 
-## 사용자 정의 체이닝 메서드
-`.prop(name, (ctx, value) => this)`를 사용해 커스텀 메서드를 추가할 수 있습니다.
-```ts
-ui("div").prop("bg", (c, v: string) => c.self.style({ background: v }))
-  .bg("red")
-  .p(12);
-```
+Spacing helpers:
+- `.p(value)` sets padding. `value` can be a number, string, or `(ctx)=>number|string`.
+  - Numbers are auto-suffixed with `px`.
+  - Functions are resolved with `UIContext` each render/effect.
+- `.m(value)` sets margin with the same rules as `.p()`.
 
-## CSR 마운트
-SSR HTML 내 컨테이너(`#__hipst_app__`)에 클라이언트에서 마운트합니다.
+## Events
 
-- 기본적으로 `server().route(App)` 또는 `hipst build --app ...`를 사용하면 클라이언트 엔트리가 자동 생성/번들되어 `mount(App, ...)`가 호출됩니다.
-- 직접 엔트리를 작성하고 싶다면 아래처럼 사용할 수 있습니다.
+- Example: `.onClick((ctx, ev) => { ... })`.
 
-```ts
-// examples/manual.client.ts (선택 사항: 명시 엔트리를 쓸 때만)
-import { mount } from "hipst";
-import { App } from "./app";
+## Custom chainable methods
 
-mount(App, document.getElementById("__hipst_app__")!);
-```
+- Use `.prop(name, (ctx, value) => comp)` to define fluent methods at runtime.
 
-스타일은 `html()` 루트에서 `.css(path)`로 선언하세요. 선언된 CSS는 CSR 번들에 포함됩니다.
+## HtmlRoot extras
+
+- `title(value)`, `meta(name, content)`, `css(path)` to include CSS in builds/server CSR.

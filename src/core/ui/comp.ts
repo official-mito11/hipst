@@ -3,7 +3,7 @@ import { Component } from "../comp";
 import type { ValueOrFn } from "../context";
 import { resolveValue } from "../context";
 import { unwrap } from "../util";
-import type { UIContext } from "./context";
+import type { UIContext, PropsCtx } from "./context";
 import { track, trigger } from "./reactive";
 import type { MethodType } from "../util";
 
@@ -11,32 +11,37 @@ type CSSProperties = CSSProps<string | number>;
 
 // A callable component where children value functions receive a context
 // whose parent is the concrete component type `C`.
-export type WithCallable<C extends UIComponent<any, any>, P = UIComponent<any, any>> = C & ((
+export type WithCallable<C extends UIComponent<any, any, any>, P = UIComponent<any, any, any>> = C & ((
   ...children: Array<
     | string
-    | UIComponent<any, any>
+    | UIComponent<any, any, any>
     | ValueOrFn<string, { self: C; parent?: P }>
   >
 ) => C);
 
 type StateProps<S extends object> = { [K in keyof S]: S[K] };
-type WithState<C extends UIComponent<any, any>, NS extends object> = C extends UIComponent<infer TG, any>
-  ? UIComponent<TG, NS>
-  : UIComponent<any, NS>;
+type WithState<C extends UIComponent<any, any, any>, NS extends object> = C extends UIComponent<infer TG, any, infer PP>
+  ? UIComponent<TG, NS, PP>
+  : UIComponent<any, NS, any>;
+type WithProps<C extends UIComponent<any, any, any>, NP extends object> = C extends UIComponent<infer TG, infer SS, any>
+  ? UIComponent<TG, SS, NP>
+  : UIComponent<any, any, NP>;
 // Typed, non-recursive state facade: callable + key accessors, refined return type for chaining
-export type StateFacade<C extends UIComponent<any, any>, S extends object> = {
+export type StateFacade<C extends UIComponent<any, any, any>, S extends object> = {
   <K extends keyof S & string>(key: K, value: S[K]): WithCallable<C>;
   <K extends string, V>(key: K, value: V): WithCallable<WithState<C, S & { [P in K]: V }>>;
   <T extends Record<string, any>>(obj: T): WithCallable<WithState<C, S & T>>;
 } & StateProps<S> & { [key: string]: unknown };
 
-export class UIComponent<Tag extends string = string, S extends object = {}> extends Component {
+export class UIComponent<Tag extends string = string, S extends object = {}, P extends object = {}> extends Component {
   private _tag: Tag;
   private _stateStore: Record<string, unknown> = {};
+  private _propsStore: Record<string, unknown> = {};
   private _stylesStore: CSSProperties = {};
   private _attrsStore: Record<string, unknown> = {};
-  private _stateProxy?: StateFacade<UIComponent<Tag, S>, S>;
-  private _children: Array<string | UIComponent<any, any> | ValueOrFn<string, any>> = [];
+  private _stateProxy?: StateFacade<UIComponent<Tag, S, P>, S>;
+  private _propsProxy?: PropsCtx<P>;
+  private _children: Array<string | UIComponent<any, any, any> | ValueOrFn<string, any>> = [];
   private _events: Record<string, Array<(ctx: any, ev?: Event) => unknown>> = {};
   private _parent?: UIComponent<any, any>;
   private _root?: UIComponent<any, any>;
@@ -55,22 +60,29 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
   public get children() { return this._children; }
 
   // Context-aware reactive state facade: callable for init, property get/set for reactive access
-  public get state(): StateFacade<UIComponent<Tag, S>, S> {
+  public get state(): StateFacade<UIComponent<Tag, S, P>, S> {
     if (!this._stateProxy) {
       this._stateProxy = this.createStateFacade();
     }
-    return this._stateProxy as StateFacade<UIComponent<Tag, S>, S>;
+    return this._stateProxy as StateFacade<UIComponent<Tag, S, P>, S>;
+  }
+  public get props(): PropsCtx<P> {
+    if (!this._propsProxy) {
+      this._propsProxy = this.createPropsFacade();
+    }
+    return this._propsProxy as PropsCtx<P>;
   }
   public get styles() { return this._stylesStore; }
   public get attributes() { return this._attrsStore; }
 
   // Helpers
-  private uiCtx(): UIContext<this, S> {
+  private uiCtx(): UIContext<this, S, P> {
     return {
       self: this,
       parent: this._parent,
       root: this._root,
       state: this.state as unknown as import("./context").StateCtx<S>,
+      props: this.props as any,
       styles: this._stylesStore as this["styles"],
       attributes: this._attrsStore as this["attributes"],
     };
@@ -80,7 +92,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
   public append(
     ...kids: Array<
       | string
-      | UIComponent<any, any>
+      | UIComponent<any, any, any>
       | ValueOrFn<string, { self: UIComponent<any, any>; parent?: UIComponent<any, any> }>
     >
   ): this {
@@ -96,10 +108,12 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
         this._children.push(k);
       }
     }
+    // reactive children list
+    trigger((this as any)._children, "__list__");
     return this;
   }
 
-  public nth(i: number): UIComponent<any, any> | undefined {
+  public nth(i: number): UIComponent<any, any, any> | undefined {
     const k = this._children[i];
     return k instanceof UIComponent ? k : undefined;
   }
@@ -131,36 +145,41 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
   }
 
   // State / Attributes / Styles
-  public attr<T = unknown>(key: string, value: ValueOrFn<T, UIContext<this, S>>): this {
+  public attr<T = unknown>(key: string, value: ValueOrFn<T, UIContext<this, S, P>>): this {
     this._attrsStore[key] = value as any;
+    trigger(this._attrsStore, "__keys__");
+    trigger(this._attrsStore, key);
     return this;
   }
 
-  public style<K extends keyof CSSProperties>(key: K, value: ValueOrFn<NonNullable<CSSProperties[K]>, UIContext<this, S>>): this;
+  public style<K extends keyof CSSProperties>(key: K, value: ValueOrFn<NonNullable<CSSProperties[K]>, UIContext<this, S, P>>): this;
   public style(obj: Partial<CSSProperties>): this;
-  public style(arg1: keyof CSSProperties | Partial<CSSProperties>, arg2?: ValueOrFn<unknown, UIContext<this, S>>): this {
+  public style(arg1: keyof CSSProperties | Partial<CSSProperties>, arg2?: ValueOrFn<unknown, UIContext<this, S, P>>): this {
     if (typeof arg1 === "object") {
       Object.assign(this._stylesStore, arg1);
+      for (const k of Object.keys(arg1)) trigger(this._stylesStore, k);
+      trigger(this._stylesStore, "__keys__");
     } else {
       (this._stylesStore as any)[arg1] = arg2 as any;
+      trigger(this._stylesStore, arg1);
     }
     return this;
   }
 
   // Common shorthands
-  public id(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("id", v); }
-  public className(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("class", v); }
+  public id(v: ValueOrFn<string, UIContext<this, S, P>>): this { return this.attr("id", v); }
+  public className(v: ValueOrFn<string, UIContext<this, S, P>>): this { return this.attr("class", v); }
   /**
    * Alias for setting class attribute. Prefer using classes()/class() for class-first styling.
    */
-  public class(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("class", v); }
+  public class(v: ValueOrFn<string, UIContext<this, S, P>>): this { return this.attr("class", v); }
   /**
    * Apply classes from string | string[] | Record<string, boolean>.
    * Example:
    *  .classes(["btn", ({state})=> state.on && "on"]) or .classes({ btn: true, on: ({state})=> state.on })
    */
-  public classes(v: ValueOrFn<string | string[] | Record<string, any>, UIContext<this, S>>): this {
-    return this.attr("class", (ctx: UIContext<this, S>) => {
+  public classes(v: ValueOrFn<string | string[] | Record<string, any>, UIContext<this, S, P>>): this {
+    return this.attr("class", (ctx: UIContext<this, S, P>) => {
       const raw = typeof v === "function" ? (v as any)(ctx) : v;
       if (Array.isArray(raw)) return raw.filter(Boolean).map(String).join(" ");
       if (raw && typeof raw === "object") {
@@ -175,32 +194,40 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
     });
   }
   // Simple attribute helpers (no conditional restrictions to avoid deep generic instantiation)
-  public htmlFor(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("for", v as any); }
-  public type(v: ValueOrFn<string, UIContext<this, S>>): this { return this.attr("type", v as any); }
-  public checked(v: ValueOrFn<boolean, UIContext<this, S>>): this { return this.attr("checked", v as any); }
-  public value(v: ValueOrFn<string | number, UIContext<this, S>>): this { return this.attr("value", v as any); }
+  public htmlFor(v: ValueOrFn<string, UIContext<this, S, P>>): this { return this.attr("for", v as any); }
+  public type(v: ValueOrFn<string, UIContext<this, S, P>>): this { return this.attr("type", v as any); }
+  public checked(v: ValueOrFn<boolean, UIContext<this, S, P>>): this { return this.attr("checked", v as any); }
+  public value(v: ValueOrFn<string | number, UIContext<this, S, P>>): this { return this.attr("value", v as any); }
 
-  public display(v: ValueOrFn<CSSProperties["display"], UIContext<this, S>>): this { return this.style("display", v as any); }
-  public flexDirection(v: ValueOrFn<CSSProperties["flexDirection"], UIContext<this, S>>): this { return this.style("flexDirection", v as any); }
+  public display(v: ValueOrFn<CSSProperties["display"], UIContext<this, S, P>>): this { return this.style("display", v as any); }
+  public flexDirection(v: ValueOrFn<CSSProperties["flexDirection"], UIContext<this, S, P>>): this { return this.style("flexDirection", v as any); }
   public flexCol(): this { return this.display("flex").flexDirection("column"); }
   public flexRow(): this { return this.display("flex").flexDirection("row"); }
-  public p(v: ValueOrFn<string | number, UIContext<this, S>>): this;
-  public p(px: string | number | ValueOrFn<string | number, UIContext<this, S>>): this {
+  public p(v: ValueOrFn<string | number, UIContext<this, S, P>>): this;
+  public p(px: string | number | ValueOrFn<string | number, UIContext<this, S, P>>): this {
     if (typeof px === "function") {
-      return this.style("padding", (ctx: UIContext<this, S>) => {
-        const out = (px as (c: UIContext<this, S>) => string | number)(ctx);
+      return this.style("padding", (ctx: UIContext<this, S, P>) => {
+        const out = (px as (c: UIContext<this, S, P>) => string | number)(ctx);
         return typeof out === "number" ? `${out}px` : out;
       });
     }
     return this.style({ padding: typeof px === "number" ? `${px}px` : px });
   }
-  public m(px: string | number): this { return this.style({ margin: typeof px === "number" ? `${px}px` : px }); }
+  public m(v: ValueOrFn<string | number, UIContext<this, S, P>>): this {
+    if (typeof v === "function") {
+      return this.style("margin", (ctx: UIContext<this, S, P>) => {
+        const out = (v as (c: UIContext<this, S, P>) => string | number)(ctx);
+        return typeof out === "number" ? `${out}px` : out;
+      });
+    }
+    return this.style({ margin: typeof v === "number" ? `${v}px` : v });
+  }
   public textCenter(): this { return this.style({ textAlign: "center" }); }
 
   // Events (stored only)
-  public onClick(fn: (ctx: UIContext<this, S>, ev?: MouseEvent) => unknown): this {
+  public onClick(fn: (ctx: UIContext<this, S, P>, ev?: MouseEvent) => unknown): this {
     // Store with a widened context type to avoid variance issues across components
-    (this._events["click"] ||= []).push(fn as unknown as (ctx: UIContext<UIComponent<any, any>, any>, ev?: Event) => unknown);
+    (this._events["click"] ||= []).push(fn as unknown as (ctx: UIContext<UIComponent<any, any, any>, any, any>, ev?: Event) => unknown);
     return this;
   }
 
@@ -208,27 +235,34 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
   // Overloads to infer optional argument if handler's value parameter is optional
   public prop<K extends string, T = unknown>(
     name: K,
-    fn: (ctx: UIContext<this, S>, value: T) => this
-  ): this & { [P in K]: (value: T) => this };
+    fn: (ctx: UIContext<this, S, P>, value?: T) => this
+  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & { [PN in K]: (value?: ValueOrFn<T, UIContext<UIComponent<Tag, S, P & Record<K, T>>, S, P & Record<K, T>>>) => WithCallable<UIComponent<Tag, S, P & Record<K, T>>> };
   public prop<K extends string, T = unknown>(
     name: K,
-    fn: (ctx: UIContext<this, S>, value?: T) => this
-  ): this & { [P in K]: (value?: T) => this };
+    fn: (ctx: UIContext<this, S, P>, value: T) => this
+  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & { [PN in K]: (value: ValueOrFn<T, UIContext<UIComponent<Tag, S, P & Record<K, T>>, S, P & Record<K, T>>>) => WithCallable<UIComponent<Tag, S, P & Record<K, T>>> };
   public prop<K extends string, T = unknown>(
     name: K,
-    fn: (ctx: UIContext<this, S>, value: T | undefined) => this
-  ): this & { [P in K]: MethodType<this, T> } {
+    fn: (ctx: UIContext<this, S, P>, value: T | undefined) => this
+  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & { [PN in K]: (value?: ValueOrFn<T, UIContext<UIComponent<Tag, S, P & Record<K, T>>, S, P & Record<K, T>>>) => WithCallable<UIComponent<Tag, S, P & Record<K, T>>> } {
     if ((this as any)[name]) {
       throw new Error(`Method ${String(name)} already exists`);
     }
     Object.defineProperty(this, name, {
       // Accept optional value at runtime; compile-time optionality comes from overloads/MethodType
-      value: (value?: T) => fn(this.uiCtx(), value as any),
+      value: (value?: ValueOrFn<T, UIContext<this, S, P>>) => {
+        // Persist raw prop value for cross-prop referencing via ctx.props
+        (this as any)._propsStore[String(name)] = value as unknown;
+        trigger((this as any)._propsStore, String(name));
+        const ctx = this.uiCtx();
+        const resolved = resolveValue(ctx, value as any);
+        return fn(ctx, resolved as T);
+      },
       writable: true,
       configurable: true,
       enumerable: false,
     });
-    return this as any;
+    return (this as any).__hipst_callable__ as any;
   }
 
   private findRoot(): this | undefined {
@@ -238,7 +272,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
   }
 
   private createStateFacade() {
-    const self = this as UIComponent<Tag, S>;
+    const self = this as UIComponent<Tag, S, P>;
     // callable initializer
     const init = function (this: unknown, keyOrObj: unknown, value?: unknown) {
       if (keyOrObj && typeof keyOrObj === "object" && !Array.isArray(keyOrObj)) {
@@ -264,11 +298,12 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
         if (typeof prop === "string") {
           track((self as any)._stateStore, prop);
           const raw = (self as any)._stateStore[prop];
-          const ctx: UIContext<UIComponent<Tag, S>, S> = {
+          const ctx: UIContext<UIComponent<Tag, S, P>, S, P> = {
             self,
             parent: self.parent,
             root: self.root,
             state: proxy as any,
+            props: self.props as any,
             styles: (self as any)._stylesStore as any,
             attributes: (self as any)._attrsStore as any,
           } as any;
@@ -307,5 +342,42 @@ export class UIComponent<Tag extends string = string, S extends object = {}> ext
     // prevent higher-level wrapping (Component/toCallable) from overriding proxy behavior
     proxy.__hipst_no_wrap__ = true;
     return proxy;
+  }
+
+  private createPropsFacade() {
+    const self = this as UIComponent<Tag, S, P>;
+    const proxy: any = new Proxy({}, {
+      get(_t, prop: any, _r) {
+        if (typeof prop !== "string") return undefined as any;
+        track((self as any)._propsStore, prop);
+        const raw = (self as any)._propsStore[prop];
+        const ctx: UIContext<UIComponent<Tag, S, P>, S, P> = {
+          self,
+          parent: self.parent,
+          root: self.root,
+          state: self.state as any,
+          props: proxy as any,
+          styles: (self as any)._stylesStore as any,
+          attributes: (self as any)._attrsStore as any,
+        } as any;
+        return resolveValue(ctx, raw as any);
+      },
+      set(_t, prop: any, value: any) {
+        if (typeof prop !== "string") return Reflect.set({}, prop, value);
+        const old = (self as any)._propsStore[prop];
+        (self as any)._propsStore[prop] = value;
+        if (old !== value) trigger((self as any)._propsStore, prop);
+        return true;
+      },
+      deleteProperty(_t, prop: any) {
+        if (typeof prop !== "string") return false;
+        const ok = delete (self as any)._propsStore[prop];
+        trigger((self as any)._propsStore, prop);
+        return ok;
+      },
+    });
+    // prevent higher-level wrapping
+    proxy.__hipst_no_wrap__ = true;
+    return proxy as PropsCtx<P>;
   }
 }

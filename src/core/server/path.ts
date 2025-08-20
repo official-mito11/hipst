@@ -1,4 +1,8 @@
+const COMPILED_CACHE = new Map<string, { regex: RegExp; keys: string[] }>();
+
 export function compilePath(pattern: string) {
+  let cached = COMPILED_CACHE.get(pattern);
+  if (cached) return cached;
   const parts = pattern.split("/").filter(Boolean);
   const keys: string[] = [];
   const regexParts = parts.map((p) => {
@@ -6,7 +10,9 @@ export function compilePath(pattern: string) {
     return p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   });
   const regex = new RegExp("^/" + regexParts.join("/") + "/*$");
-  return { regex, keys };
+  cached = { regex, keys };
+  COMPILED_CACHE.set(pattern, cached);
+  return cached;
 }
 
 export function applyParams(pattern: string, params?: Record<string, string | number>): string {
