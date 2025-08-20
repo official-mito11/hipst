@@ -20,8 +20,13 @@ const jwtAuth = middleware<{ user: JwtPayload }>(({ next, headers, status }) => 
   return status(401).res({ message: "unauthorized" });
 });
 
+const testApi = api("/test")
+.use(jwtAuth)
+.get(({res, user}) => res(`your name is ${user?.name}`));
+
 export const myApi = api("/auth/me")
   .use(jwtAuth)
+  .route(testApi)
   .get(({ user, res }) => res(`your name is ${user.name}`))
   .post(({body, res}) => {
     const { data } = body;

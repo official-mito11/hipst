@@ -2,7 +2,7 @@ import type { Properties as CSSProps } from "csstype";
 import { Component } from "../comp";
 import type { ValueOrFn } from "../context";
 import { resolveValue } from "../context";
-import { unwrap } from "../util";
+import { unwrap, toCallable } from "../util";
 import type { UIContext, PropsCtx } from "./context";
 import { track, trigger } from "./reactive";
 import type { MethodType } from "../util";
@@ -26,11 +26,33 @@ type WithState<C extends UIComponent<any, any, any>, NS extends object> = C exte
 type WithProps<C extends UIComponent<any, any, any>, NP extends object> = C extends UIComponent<infer TG, infer SS, any>
   ? UIComponent<TG, SS, NP>
   : UIComponent<any, any, NP>;
+// Map current prop keys to chainable methods so all previously defined props remain available on the type
+// Only materialize prop methods for literal keys. If P is wide (e.g., Record<string, unknown>), produce none.
+type PropKeySet<P extends object> = string extends keyof P ? never : keyof P & string;
+type PropMethods<Tag extends string, S extends object, P extends object> = {
+  [K in PropKeySet<P>]: (
+    value?: ValueOrFn<P[K], UIContext<UIComponent<Tag, S, P>, S, P>>
+  ) => WithCallable<UIComponent<Tag, S, P>>
+};
+
+// Helpers to extract generics from a UIComponent type
+type TagOf<C extends UIComponent<any, any, any>> = C extends UIComponent<infer TG, any, any> ? TG : string;
+type StateOf<C extends UIComponent<any, any, any>> = C extends UIComponent<any, infer SS, any> ? SS : {};
+type PropsOf<C extends UIComponent<any, any, any>> = C extends UIComponent<any, any, infer PP> ? PP : {};
+
+// Derive DOM element and event map from Tag using lib.dom.d.ts
+type ElementFromTag<T extends string> =
+  T extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[T] :
+  T extends keyof SVGElementTagNameMap ? SVGElementTagNameMap[T] : Element;
+
+type EventMapFor<T extends string> =
+  T extends keyof HTMLElementTagNameMap ? HTMLElementEventMap :
+  T extends keyof SVGElementTagNameMap ? SVGElementEventMap : GlobalEventHandlersEventMap;
 // Typed, non-recursive state facade: callable + key accessors, refined return type for chaining
 export type StateFacade<C extends UIComponent<any, any, any>, S extends object> = {
-  <K extends keyof S & string>(key: K, value: S[K]): WithCallable<C>;
-  <K extends string, V>(key: K, value: V): WithCallable<WithState<C, S & { [P in K]: V }>>;
-  <T extends Record<string, any>>(obj: T): WithCallable<WithState<C, S & T>>;
+  <K extends keyof S & string>(key: K, value: S[K]): WithCallable<C> & PropMethods<TagOf<C>, StateOf<C>, PropsOf<C>>;
+  <K extends string, V>(key: K, value: V): WithCallable<WithState<C, S & { [P in K]: V }>> & PropMethods<TagOf<C>, S & { [P in K]: V }, PropsOf<C>>;
+  <T extends Record<string, any>>(obj: T): WithCallable<WithState<C, S & T>> & PropMethods<TagOf<C>, S & T, PropsOf<C>>;
 } & StateProps<S> & { [key: string]: unknown };
 
 export class UIComponent<Tag extends string = string, S extends object = {}, P extends object = {}> extends Component {
@@ -122,7 +144,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
    * Initialize multiple state keys with strong typing and refine this component's state shape.
    * Example: ui("div").stateInit({ count: 0 }) => ctx.state.count inferred as number
    */
-  public stateInit<T extends object>(obj: T): WithCallable<UIComponent<Tag, S & T>> {
+  public stateInit<T extends object>(obj: T): WithCallable<UIComponent<Tag, S & T>> & PropMethods<Tag, S & T, P> {
     Object.assign(this._stateStore, obj);
     for (const k in obj) trigger((this as any)._stateStore, k);
     return (this as any).__hipst_callable__ as any;
@@ -131,7 +153,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
   /**
    * Refine this component's state type without mutating runtime state. Useful for declaring shape.
    */
-  public typed<T extends Record<string, any>>(): WithCallable<UIComponent<Tag, S & T>> {
+  public typed<T extends Record<string, any>>(): WithCallable<UIComponent<Tag, S & T>> & PropMethods<Tag, S & T, P> {
     return (this as any).__hipst_callable__ as any;
   }
 
@@ -140,7 +162,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
    * infer `parent.state` shape inside child lambdas, e.g.:
    * ui("button").parentTyped<{ count: number }>()(({ parent }) => parent!.state.count.toFixed(0))
    */
-  public parentTyped<PS extends object>(): WithCallable<UIComponent<Tag, S>, UIComponent<any, PS>> {
+  public parentTyped<PS extends object>(): WithCallable<UIComponent<Tag, S>, UIComponent<any, PS>> & PropMethods<Tag, S, P> {
     return (this as any).__hipst_callable__ as any;
   }
 
@@ -162,6 +184,8 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
     } else {
       (this._stylesStore as any)[arg1] = arg2 as any;
       trigger(this._stylesStore, arg1);
+      // Also notify key observers so runtime effects can pick up newly added keys
+      trigger(this._stylesStore, "__keys__");
     }
     return this;
   }
@@ -224,11 +248,57 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
   }
   public textCenter(): this { return this.style({ textAlign: "center" }); }
 
-  // Events (stored only)
-  public onClick(fn: (ctx: UIContext<this, S, P>, ev?: MouseEvent) => unknown): this {
-    // Store with a widened context type to avoid variance issues across components
-    (this._events["click"] ||= []).push(fn as unknown as (ctx: UIContext<UIComponent<any, any, any>, any, any>, ev?: Event) => unknown);
+  // Events (stored only) – typed per Tag using standard DOM event maps
+  public on<K extends keyof EventMapFor<Tag>>(type: K, fn: (ctx: UIContext<this, S, P>, ev: EventMapFor<Tag>[K]) => unknown): this;
+  public on(type: string, fn: (ctx: UIContext<this, S, P>, ev: Event) => unknown): this {
+    (this._events[type] ||= []).push(fn as unknown as (ctx: UIContext<UIComponent<any, any, any>, any, any>, ev?: Event) => unknown);
     return this;
+  }
+
+  public onClick(fn: (ctx: UIContext<this, S, P>, ev: MouseEvent) => unknown): this {
+    return this.on("click", fn as (c: UIContext<this, S, P>, e: MouseEvent) => unknown);
+  }
+
+  /**
+   * Define a custom call handler for this component while preserving children-call syntax.
+   * Example:
+   *  const Checkbox = ui('input').type('checkbox').define(({ self }, checked?: boolean) => self.attr('checked', !!checked))
+   *  Checkbox(true) // -> sets checked
+   *  Checkbox(ui('span')("label")) // -> appends children
+   */
+  public define<A extends any[]>(
+    invoker: (ctx: UIContext<this, S, P>, ...args: A) => this | void
+  ): (WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) & ((...args: A) => WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) {
+    const self = this as UIComponent<Tag, S, P>;
+    // Helper to check if a value is a valid child (string | UIComponent | function)
+    const isChild = (v: unknown): boolean => {
+      if (v == null) return false;
+      if (typeof v === "string") return true;
+      if (typeof v === "function") return true; // ValueOrFn<string, ...>
+      if (Array.isArray(v)) return v.every(isChild);
+      return v instanceof UIComponent;
+    };
+    const flatten = (arr: any[]): any[] => {
+      const out: any[] = [];
+      for (const a of arr) {
+        if (Array.isArray(a)) out.push(...flatten(a)); else out.push(a);
+      }
+      return out;
+    };
+    const callable = toCallable<UIComponent<Tag, S, P>, any[], UIComponent<Tag, S, P>>(self, (s, ...args: any[]) => {
+      // If all args look like children (or no args), treat as children call; otherwise run invoker
+      const treatAsChildren = args.length === 0 || args.every(isChild);
+      if (treatAsChildren) {
+        (s as UIComponent<any, any, any>).append(...flatten(args) as any);
+        return s;
+      }
+      const ctx = (s as any).uiCtx() as UIContext<UIComponent<Tag, S, P>, S, P>;
+      (invoker as any)(ctx, ...args);
+      return s;
+    });
+    // Ensure other helpers (e.g., state facade) return the new callable
+    (self as any).__hipst_callable__ = callable;
+    return callable as unknown as (WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) & ((...args: A) => WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>);
   }
 
   // Define a custom chainable method (fluent interface) using UIContext
@@ -236,15 +306,15 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
   public prop<K extends string, T = unknown>(
     name: K,
     fn: (ctx: UIContext<this, S, P>, value?: T) => this
-  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & { [PN in K]: (value?: ValueOrFn<T, UIContext<UIComponent<Tag, S, P & Record<K, T>>, S, P & Record<K, T>>>) => WithCallable<UIComponent<Tag, S, P & Record<K, T>>> };
+  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & PropMethods<Tag, S, P & Record<K, T>>;
   public prop<K extends string, T = unknown>(
     name: K,
     fn: (ctx: UIContext<this, S, P>, value: T) => this
-  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & { [PN in K]: (value: ValueOrFn<T, UIContext<UIComponent<Tag, S, P & Record<K, T>>, S, P & Record<K, T>>>) => WithCallable<UIComponent<Tag, S, P & Record<K, T>>> };
+  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & PropMethods<Tag, S, P & Record<K, T>>;
   public prop<K extends string, T = unknown>(
     name: K,
     fn: (ctx: UIContext<this, S, P>, value: T | undefined) => this
-  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & { [PN in K]: (value?: ValueOrFn<T, UIContext<UIComponent<Tag, S, P & Record<K, T>>, S, P & Record<K, T>>>) => WithCallable<UIComponent<Tag, S, P & Record<K, T>>> } {
+  ): WithCallable<UIComponent<Tag, S, P & Record<K, T>>> & PropMethods<Tag, S, P & Record<K, T>> {
     if ((this as any)[name]) {
       throw new Error(`Method ${String(name)} already exists`);
     }
@@ -288,7 +358,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
       }
       // return the component instance for chaining; Component proxy will map to receiver
       return self as any;
-    } as unknown as StateFacade<UIComponent<Tag, S>, S>;
+    } as unknown as StateFacade<UIComponent<Tag, S, P>, S>;
     // wrap with proxy to support property get/set reactivity
     const proxy: any = new Proxy(init, {
       get(_t, prop: any, _r) {

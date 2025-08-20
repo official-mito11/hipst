@@ -1,6 +1,7 @@
-# hipst
+# Hipst
 
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-Explore-blue)](https://deepwiki.com/official-mito11/hipst)
+
 <p align="center">
   <img src="assets/icon.svg" alt="hipst logo" width="80" height="80" />
 </p>
@@ -43,10 +44,10 @@
 bun install
 
 # Run an example (SSR + CSR assets)
-bun run hipst serve examples/counter.app.ts#App --port 3000
+bun run hipst serve examples/counter.app.ts --port 3000
 
 # Build (SSR HTML + CSR assets): emits index.html + app.mjs (+ app.css) and supporting bundles
-bun run hipst build examples/counter.app.ts#App --out dist/counter-fe
+bun run hipst build examples/counter.app.ts --out dist/counter-fe
 
 # Build (CSR-only HTML): emits index.html and supporting bundles
 bun run hipst build examples/counter.app.ts --client --out dist/counter-fe-client
@@ -84,13 +85,13 @@ export const hello = api("/hello").get(({ res }) => res({ ok: true }));
 Serve locally:
 
 ```bash
-bun run hipst serve app.ts#App --api api.ts#hello --port 3000
+bun run hipst serve app.ts --port 3000
 ```
 
 Build static assets (SSR HTML + CSR assets):
 
 ```bash
-bun run hipst build app.ts#App --out dist/app
+bun run hipst build app.ts --out dist/app
 ```
 
 ---

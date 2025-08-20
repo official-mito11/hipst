@@ -9,7 +9,8 @@ const App = html()
   .meta("description", "basic example")
   (
     ui("div")
-      .flexCol()
+      .display("flex")
+      .flexDirection("column")
       .p(16)
       (
         ui("h1")("Hello hipst"),

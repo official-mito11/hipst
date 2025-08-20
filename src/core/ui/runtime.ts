@@ -1,23 +1,24 @@
 import { HtmlRoot } from "./factory";
 import { UIComponent } from "./comp";
-import type { UIContext } from "./context";
-import { resolveValue } from "../context";
-import { effect, type Eff, stop } from "./reactive";
+import type { UIContext, StateCtx, PropsCtx } from "./context";
+import { resolveValue, type ValueOrFn } from "../context";
+import { effect, track, type Eff, stop } from "./reactive";
 import { unwrap } from "../util";
 
-const ATTR_CACHE = new WeakMap<HTMLElement, Map<string, any>>();
-const STYLE_CACHE = new WeakMap<HTMLElement, Map<string, any>>();
+const ATTR_CACHE = new WeakMap<HTMLElement, Map<string, string | null>>();
+const STYLE_CACHE = new WeakMap<HTMLElement, Map<string, string | number>>();
 const TEXT_CACHE = new WeakMap<Node, string>();
 const EFFECTS_SYM: unique symbol = Symbol.for("__hipst_effects__");
 
+type NodeWithEffects = { [k in typeof EFFECTS_SYM]?: Set<Eff> };
 function regEffect(node: Node, e: Eff) {
-  const anyNode = node as any;
-  let set: Set<Eff> = anyNode[EFFECTS_SYM];
-  if (!set) anyNode[EFFECTS_SYM] = set = new Set<Eff>();
+  const effNode = node as unknown as NodeWithEffects;
+  let set = effNode[EFFECTS_SYM];
+  if (!set) { set = new Set<Eff>(); effNode[EFFECTS_SYM] = set; }
   set.add(e);
 }
 
-function setAttr(el: HTMLElement, name: string, v: any) {
+function setAttr(el: HTMLElement, name: string, v: unknown) {
   let val: string | null;
   if (v === undefined || v === null || v === false) val = null;
   else if (v === true) val = "";
@@ -30,9 +31,9 @@ function setAttr(el: HTMLElement, name: string, v: any) {
   else el.setAttribute(name, val);
 }
 
-function setStyle(el: HTMLElement, key: string, v: any) {
-  const style = (el.style as any);
-  const next = (v === undefined || v === null || v === false) ? "" : v;
+function setStyle(el: HTMLElement, key: string, v: unknown) {
+  const style = el.style as unknown as Record<string, string | number>;
+  const next: string | number = (v === undefined || v === null || v === false) ? "" : (v as string | number);
   const cache = STYLE_CACHE.get(el) || (STYLE_CACHE.set(el, new Map()), STYLE_CACHE.get(el)!);
   const prev = cache.get(key);
   if (prev === next) return;
@@ -40,80 +41,117 @@ function setStyle(el: HTMLElement, key: string, v: any) {
   style[key] = next;
 }
 
-function mountComponent(node: UIComponent<any, any>, container: HTMLElement, root: UIComponent<any, any>): HTMLElement {
-  node = unwrap(node) as UIComponent<any, any>;
+type LooseObj = Record<string, unknown>;
+function mountComponent<T extends string, S extends object, P extends object>(
+  nodeIn: UIComponent<T, S, P>,
+  container: HTMLElement,
+  root: UIComponent<string, LooseObj, LooseObj>
+): HTMLElement {
+  const node = unwrap(nodeIn) as UIComponent<T, S, P>;
   const el = document.createElement(node.tag);
 
-  const ctx: UIContext<UIComponent<any, any>> = {
+  const ctx: UIContext<UIComponent<T, S, P>, S, P> = {
     self: node,
-    parent: node.parent,
+    parent: node.parent as unknown as UIComponent<string, LooseObj, LooseObj> | undefined,
     root,
-    state: (node as any).state,
-    props: (node as any).props,
-    styles: (node as any).styles,
-    attributes: (node as any).attributes,
-  } as any;
+    state: node.state as unknown as StateCtx<S>,
+    props: node.props as PropsCtx<P>,
+    styles: node.styles,
+    attributes: node.attributes,
+  };
 
-  // attributes
-  const rawAttrs = (node as any)._attrsStore ?? {};
-  for (const [name, raw] of Object.entries(rawAttrs)) {
+  // attributes: track keys and values, apply all each run, and remove deleted ones
+  const rawAttrs: Record<string, unknown> = ((node as unknown) as { _attrsStore?: Record<string, unknown> })._attrsStore ?? {};
+  {
     const runner = effect(() => {
-      const v = resolveValue(ctx, raw as any);
-      setAttr(el, name, v);
+      track(rawAttrs, "__keys__");
+      const seen = new Set<string>();
+      for (const [name, raw] of Object.entries(rawAttrs)) {
+        seen.add(name);
+        track(rawAttrs, name);
+        const v = resolveValue(ctx, raw as ValueOrFn<unknown, UIContext<UIComponent<T, S, P>, S, P>>);
+        setAttr(el, name, v);
+      }
+      const cache = ATTR_CACHE.get(el) || (ATTR_CACHE.set(el, new Map()), ATTR_CACHE.get(el)!);
+      for (const key of Array.from(cache.keys())) {
+        if (!seen.has(key)) setAttr(el, key, null);
+      }
     });
     regEffect(el, runner);
   }
 
-  // styles
-  const rawStyles = (node as any)._stylesStore ?? {};
-  for (const key of Object.keys(rawStyles)) {
+  // styles: track keys and values, apply all each run, and clear removed ones
+  const rawStyles: Record<string, unknown> = ((node as unknown) as { _stylesStore?: Record<string, unknown> })._stylesStore ?? {};
+  {
     const runner = effect(() => {
-      const v = resolveValue(ctx, (rawStyles as any)[key]);
-      setStyle(el, key, v);
+      track(rawStyles, "__keys__");
+      const seen = new Set<string>();
+      for (const key of Object.keys(rawStyles)) {
+        seen.add(key);
+        track(rawStyles, key);
+        const v = resolveValue(ctx, rawStyles[key] as ValueOrFn<unknown, UIContext<UIComponent<T, S, P>, S, P>>);
+        setStyle(el, key, v);
+      }
+      const cache = STYLE_CACHE.get(el) || (STYLE_CACHE.set(el, new Map()), STYLE_CACHE.get(el)!);
+      for (const k of Array.from(cache.keys())) {
+        if (!seen.has(k)) setStyle(el, k, "");
+      }
     });
     regEffect(el, runner);
   }
 
   // events
-  const events: Record<string, Array<(c: UIContext<UIComponent<any, any>>, ev?: any) => any>> = (node as any)._events ?? {};
+  const events: Record<string, Array<(c: UIContext<UIComponent<T, S, P>, S, P>, ev?: Event) => unknown>> =
+    (((node as unknown) as { _events?: Record<string, Array<(c: UIContext<UIComponent<T, S, P>, S, P>, ev?: Event) => unknown>> })._events) ?? {};
   for (const [evt, fns] of Object.entries(events)) {
     if (!Array.isArray(fns)) continue;
     el.addEventListener(evt, (ev: Event) => {
-      const callCtx: UIContext<UIComponent<any, any>> = {
+      const callCtx: UIContext<UIComponent<T, S, P>, S, P> = {
         self: node,
-        parent: node.parent,
+        parent: node.parent as unknown as UIComponent<string, LooseObj, LooseObj> | undefined,
         root,
-        state: (node as any).state,
-        props: (node as any).props,
-        styles: (node as any).styles,
-        attributes: (node as any).attributes,
-      } as any;
+        state: node.state as unknown as StateCtx<S>,
+        props: node.props as PropsCtx<P>,
+        styles: node.styles,
+        attributes: node.attributes,
+      };
       for (const fn of fns) fn(callCtx, ev);
     });
   }
 
-  // children
-  for (const child of node.children as any[]) {
-    const real = unwrap(child);
-    if (real instanceof UIComponent) {
-      const childEl = mountComponent(real, el, root);
-      el.appendChild(childEl);
-    } else if (typeof child === "function") {
-      const text = document.createTextNode("");
-      el.appendChild(text);
-      const runner = effect(() => {
-        const v = (child as any)(ctx);
-        const s = String(v ?? "");
-        const prev = TEXT_CACHE.get(text);
-        if (prev !== s) {
-          TEXT_CACHE.set(text, s);
-          text.data = s;
+  // children: fully reactive list
+  {
+    const runner = effect(() => {
+      const childStore = ((node as unknown) as { _children: Array<unknown> })._children;
+      track(childStore, "__list__");
+      // Remove current children and clean up their effects
+      while (el.firstChild) {
+        cleanupSubtree(el.firstChild);
+        el.removeChild(el.firstChild);
+      }
+      for (const child of childStore) {
+        const real = unwrap(child);
+        if (real instanceof UIComponent) {
+          const childEl = mountComponent(real as UIComponent<string, LooseObj, LooseObj>, el, root);
+          el.appendChild(childEl);
+        } else if (typeof child === "function") {
+          const text = document.createTextNode("");
+          el.appendChild(text);
+          const tr = effect(() => {
+            const s = String(((child as unknown as (c: UIContext<UIComponent<T, S, P>, S, P>) => unknown)(ctx)) ?? "");
+            const prev = TEXT_CACHE.get(text);
+            if (prev !== s) {
+              TEXT_CACHE.set(text, s);
+              text.data = s;
+            }
+          });
+          regEffect(text, tr);
+        } else {
+          el.appendChild(document.createTextNode(String(child)));
         }
-      });
-      regEffect(text, runner);
-    } else {
-      el.appendChild(document.createTextNode(String(child)));
-    }
+      }
+    });
+    regEffect(el, runner);
   }
 
   container.appendChild(el);
@@ -121,18 +159,17 @@ function mountComponent(node: UIComponent<any, any>, container: HTMLElement, roo
 }
 
 function cleanupSubtree(node: Node) {
-  const effs: Set<Eff> | undefined = (node as any)[EFFECTS_SYM];
+  const effNode = node as unknown as NodeWithEffects;
+  const effs = effNode[EFFECTS_SYM];
   if (effs) {
     for (const e of effs) stop(e);
-    (node as any)[EFFECTS_SYM] = undefined;
+    effNode[EFFECTS_SYM] = undefined;
   }
-  if ((node as Element).childNodes) {
-    const kids = (node as Element).childNodes;
-    for (let i = 0; i < kids.length; i++) cleanupSubtree(kids[i]!);
-  }
+  const kids = node.childNodes;
+  for (let i = 0; i < kids.length; i++) cleanupSubtree(kids[i] as Node);
 }
 
-export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTMLElement) {
+export function mount(rootNode: HtmlRoot | UIComponent<string, LooseObj, LooseObj>, container: HTMLElement) {
   // Clear SSR/previous hipst content before mounting to avoid duplicate DOM and leak effects
   // Clean up any effects registered on the container and its subtree
   cleanupSubtree(container);
@@ -140,7 +177,7 @@ export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTM
     cleanupSubtree(container.firstChild);
     container.removeChild(container.firstChild);
   }
-  const maybe = unwrap(rootNode) as HtmlRoot | UIComponent<any, any>;
+  const maybe = unwrap(rootNode) as HtmlRoot | UIComponent<string, LooseObj, LooseObj>;
   if (maybe instanceof HtmlRoot) {
     // Head management (title/meta)
     const r = maybe as HtmlRoot;
@@ -148,15 +185,15 @@ export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTM
       self: r,
       parent: undefined,
       root: r,
-      state: (r as any).state,
-      props: (r as any).props,
-      styles: (r as any).styles,
-      attributes: (r as any).attributes,
+      state: r.state as unknown as StateCtx<{}>,
+      props: r.props as PropsCtx<{}>,
+      styles: r.styles,
+      attributes: r.attributes,
     };
-    const title = (r as any).headTitle;
+    const title = r.headTitle;
     if (title) {
       const runner = effect(() => {
-        const v = resolveValue(ctx, title as any);
+        const v = resolveValue(ctx, title as ValueOrFn<string, UIContext<HtmlRoot>>);
         if (typeof document !== "undefined") document.title = String(v ?? "");
       });
       // Register on container so it is cleaned up on next mount
@@ -165,15 +202,14 @@ export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTM
     // metas could be handled similarly if needed
 
     // Body children
-    for (const c of (r as any).children as any[]) {
+    for (const c of (r.children as unknown as Array<unknown>)) {
       const real = unwrap(c);
-      if (real instanceof UIComponent) mountComponent(real, container, r);
+      if (real instanceof UIComponent) mountComponent(real as UIComponent<string, LooseObj, LooseObj>, container, r);
       else if (typeof c === "function") {
         const text = document.createTextNode("");
         container.appendChild(text);
         const runner = effect(() => {
-          const v = (c as any)(ctx);
-          const s = String(v ?? "");
+          const s = String(((c as unknown as (cx: UIContext<HtmlRoot>) => unknown)(ctx)) ?? "");
           const prev = TEXT_CACHE.get(text);
           if (prev !== s) {
             TEXT_CACHE.set(text, s);
@@ -187,6 +223,6 @@ export function mount(rootNode: HtmlRoot | UIComponent<any, any>, container: HTM
     }
     return;
   }
-  const realRoot = (maybe as any).root ?? maybe;
-  mountComponent(maybe, container, realRoot as UIComponent<any, any>);
+  const realRoot = ((maybe as unknown as { root?: UIComponent<string, LooseObj, LooseObj> }).root) ?? maybe;
+  mountComponent(maybe, container, realRoot);
 }

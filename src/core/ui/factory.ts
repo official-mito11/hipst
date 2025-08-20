@@ -46,9 +46,13 @@ function flatten<T>(arr: T[]): T[] {
   return out;
 }
 
-export function ui<Tag extends string>(tag: Tag): WithCallable<UIComponent<Tag>> {
-  const base = new UIComponent<Tag>(tag);
-  const callable = toCallable<UIComponent<Tag>, any[], UIComponent<Tag>>(base, (self, ...children: any[]) => {
+// Overloads leverage lib.dom.d.ts so tag names are inferred and validated
+export function ui<K extends keyof HTMLElementTagNameMap>(tag: K): WithCallable<UIComponent<K>>;
+export function ui<K extends keyof SVGElementTagNameMap>(tag: K): WithCallable<UIComponent<K>>;
+export function ui<Tag extends string>(tag: Tag): WithCallable<UIComponent<Tag>>;
+export function ui(tag: string): WithCallable<UIComponent<string>> {
+  const base = new UIComponent<string>(tag as string);
+  const callable = toCallable<UIComponent<string>, any[], UIComponent<string>>(base, (self, ...children: any[]) => {
     const kids = flatten(children);
     (self as UIComponent<any>).append(...kids as any);
     return self;

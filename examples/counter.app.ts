@@ -1,12 +1,20 @@
 import { html, ui, ValueOrFn, UIContext } from "../index.ts";
 import { myApi } from "./counter.api.ts";
 
-const VStack = ui('div')
+const TestComponent = ui('div')
 .flexCol()
 .state("rv", 1)
-.prop("r", (ctx, v?: string) => ctx.self.style("gap", v || "1rem"))
+.state("omni", 0)
+.prop("r", ({self}, v?: string) => self.style("borderRadius", v || "1rem"))
+.prop("newt", ({self}, v: string) => self.style("margin", v || "1rem"))
+.style("textAlign", "center")
+.state("test", "test")
+.newt("24px")
+.r("1rem")
 
-VStack.r()
+// Demo: Checkbox component using .define() to accept a boolean at call-time
+const Checkbox = ui('input').type('checkbox')
+  .define(({ self }, checked?: boolean) => self.attr('checked', !!checked));
 
 export const App = html()
 .title("Counter")
@@ -20,6 +28,8 @@ export const App = html()
   (
     ui("h1")("Counter"),
     ui("p")("Welcome to counter example"),
+    // Using Checkbox(true) via .define() invoker
+    Checkbox(true),
     ui("button")
     .state("count", 10)
     .p(({self})=> self.state.count)
