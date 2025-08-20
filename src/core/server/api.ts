@@ -1,26 +1,13 @@
 import { Component } from "../comp";
-import type { Context } from "../context";
+import { HttpMethod } from "../http/types";
+import { Finalish, FinalResult, ResponseBuilder, createResponseKit } from "../http/response";
+import { Middleware, MiddlewareContext } from "./middleware";
+import { compilePath } from "./path";
+import { parseBody } from "../http/body";
+import { createClientFacade, type ApiClient, type ApiClientRequestArgs } from "./client";
 
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
-
-export interface ApiClientRequestArgs {
-  params?: Record<string, string | number>;
-  query?: Record<string, any>;
-  body?: any;
-  init?: RequestInit;
-  baseUrl?: string; // optional override base URL (default: same origin)
-  headers?: HeadersInit;
-}
-
-export interface ApiClient {
-  get(args?: Omit<ApiClientRequestArgs, "body">): Promise<any>;
-  delete(args?: Omit<ApiClientRequestArgs, "body">): Promise<any>;
-  post(args?: ApiClientRequestArgs): Promise<any>;
-  put(args?: ApiClientRequestArgs): Promise<any>;
-  patch(args?: ApiClientRequestArgs): Promise<any>;
-}
-
-export interface ApiContext<C extends ApiComponent> extends Context<C> {
+export type ApiContext<L extends object = {}> = {
+  self: ApiComponent<any>;
   req: Request;
   query: Record<string, string>;
   param: Record<string, string>;
@@ -29,108 +16,51 @@ export interface ApiContext<C extends ApiComponent> extends Context<C> {
   res: (body: any) => FinalResult;
   body: any;
   headers: Headers;
-}
+} & L;
 
-export type Handler<C extends ApiComponent> = (ctx: ApiContext<C>) => Promise<Finalish> | Finalish;
+// Middleware types imported from ./middleware
 
-export type Finalish = Response | FinalResult | BodyInit | object | null | undefined;
+export type Handler<L extends object = {}> = (ctx: ApiContext<L>) => Promise<Finalish> | Finalish;
 
-export interface FinalResult {
-  __hipst_final: true;
-  status: number;
-  headers: Record<string, string>;
-  body: BodyInit | null;
-}
-
-export interface ResponseBuilder {
-  status: (code: number) => ResponseBuilder;
-  header: (key: string | Record<string, string>, value?: string) => ResponseBuilder;
-  res: (body: any) => FinalResult;
-}
-
-function createResponseKit(initStatus = 200, initHeaders: Record<string, string> = {}): {
-  statusFn: (code: number) => ResponseBuilder;
-  headerFn: (key: string | Record<string, string>, value?: string) => ResponseBuilder;
-  resFn: (body: any) => FinalResult;
-} {
-  let status = initStatus;
-  const headers: Record<string, string> = { ...initHeaders };
-  const builder: ResponseBuilder = {
-    status(c: number) {
-      status = c;
-      return builder;
-    },
-    header(key: string | Record<string, string>, value?: string) {
-      if (typeof key === "string") headers[key] = value ?? "";
-      else Object.assign(headers, key);
-      return builder;
-    },
-    res(body: any): FinalResult {
-      let out: BodyInit | null = null;
-      if (body === null || body === undefined) out = null;
-      else if (body instanceof Blob || body instanceof ArrayBuffer || body instanceof ReadableStream || typeof body === "string") out = body as any;
-      else {
-        // default JSON
-        headers["Content-Type"] = headers["Content-Type"] || "application/json";
-        out = JSON.stringify(body);
-      }
-      return { __hipst_final: true, status, headers, body: out };
-    },
-  };
-  return {
-    statusFn: (c: number) => builder.status(c),
-    headerFn: (k: any, v?: any) => builder.header(k, v),
-    resFn: (b: any) => builder.res(b),
-  };
-}
-
-function compilePath(pattern: string) {
-  const parts = pattern.split("/").filter(Boolean);
-  const keys: string[] = [];
-  const regexParts = parts.map((p) => {
-    if (p.startsWith(":")) {
-      keys.push(p.slice(1));
-      return "([^/]+)";
-    }
-    return p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  });
-  const regex = new RegExp("^/" + regexParts.join("/") + "/*$");
-  return { regex, keys };
-}
-
-export class ApiComponent extends Component {
+export class ApiComponent<L extends object = {}> extends Component {
   public readonly basePath: string;
-  private handlers: Partial<Record<HttpMethod, Handler<any>>> = {};
-  private children: ApiComponent[] = [];
-  private parent?: ApiComponent;
+  private handlers: Partial<Record<HttpMethod, Handler<L>>> = {};
+  private children: ApiComponent<any>[] = [];
+  private parent?: ApiComponent<any>;
+  private middlewares: Array<Middleware<any, any>> = [];
   public readonly client: ApiClient;
 
   constructor(basePath: string) {
     super();
     this.basePath = basePath.startsWith("/") ? basePath : "/" + basePath;
-    this.client = createClientFacade(this);
+    this.client = createClientFacade(this as any);
   }
 
-  route(child: ApiComponent): this {
+  route(child: ApiComponent<any>): this {
     child.parent = this;
     this.children.push(child);
     return this;
   }
 
-  on(method: HttpMethod, handler: Handler<this>): this {
+  use<Add extends object>(mw: Middleware<L, Add>): ApiComponent<L & Add> {
+    this.middlewares.push(mw as any);
+    return this as unknown as ApiComponent<L & Add>;
+  }
+
+  on(method: HttpMethod, handler: Handler<L>): this {
     this.handlers[method] = handler as any;
     return this;
   }
 
-  get(handler: Handler<this>): this { return this.on("GET", handler); }
-  post(handler: Handler<this>): this { return this.on("POST", handler); }
-  put(handler: Handler<this>): this { return this.on("PUT", handler); }
-  patch(handler: Handler<this>): this { return this.on("PATCH", handler); }
-  delete(handler: Handler<this>): this { return this.on("DELETE", handler); }
+  get(handler: Handler<L>): this { return this.on("GET", handler); }
+  post(handler: Handler<L>): this { return this.on("POST", handler); }
+  put(handler: Handler<L>): this { return this.on("PUT", handler); }
+  patch(handler: Handler<L>): this { return this.on("PATCH", handler); }
+  delete(handler: Handler<L>): this { return this.on("DELETE", handler); }
 
   public fullPattern(): string {
     const parts: string[] = [];
-    let p: ApiComponent | undefined = this;
+    let p: ApiComponent<any> | undefined = this as any;
     const stack: string[] = [];
     while (p) { stack.push(p.basePath); p = p.parent; }
     for (let i = stack.length - 1; i >= 0; i--) parts.push(stack[i]!);
@@ -151,7 +81,19 @@ export class ApiComponent extends Component {
     return { matched: true, params };
   }
 
-  async dispatch(req: Request, url: URL): Promise<Finalish | undefined> {
+  private collectMiddlewares(): Array<Middleware<any, any>> {
+    const chain: Array<Middleware<any, any>> = [];
+    const stack: ApiComponent<any>[] = [];
+    let p: ApiComponent<any> | undefined = this;
+    while (p) { stack.push(p); p = p.parent; }
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const n = stack[i]!;
+      for (const mw of (n as any).middlewares as Array<Middleware<any, any>>) chain.push(mw);
+    }
+    return chain;
+  }
+
+  async dispatch(req: Request, url: URL, inheritedLocals?: Record<string, any>): Promise<Finalish | undefined> {
     const path = url.pathname;
     // Check self
     const selfMatch = this.match(path);
@@ -162,14 +104,11 @@ export class ApiComponent extends Component {
         const query: Record<string, string> = {};
         url.searchParams.forEach((v, k) => (query[k] = v));
         const headers = req.headers;
-        let body: any = undefined;
-        try {
-          const contentType = headers.get("content-type") || "";
-          if (contentType.includes("application/json")) body = await req.json();
-          else if (contentType.includes("text/")) body = await req.text();
-          else body = await req.arrayBuffer();
-        } catch {}
-        const ctx: ApiContext<this> = {
+        let body: any = (inheritedLocals && (inheritedLocals as any).body !== undefined)
+          ? (inheritedLocals as any).body
+          : undefined;
+        if (body === undefined) body = await parseBody(req, headers);
+        const base = {
           self: this,
           req,
           query,
@@ -179,13 +118,45 @@ export class ApiComponent extends Component {
           res: resFn,
           body,
           headers,
-        } as any;
-        return await handler(ctx);
+        } as const;
+
+        const mwBase = {
+          req,
+          url,
+          query,
+          param: selfMatch.params,
+          header: headerFn,
+          status: statusFn,
+          res: resFn,
+          body,
+          headers,
+        } as const;
+
+        const chain = this.collectMiddlewares();
+        const locals: Record<string, any> = { ...(inheritedLocals || {}) };
+
+        const run = async (i: number): Promise<Finalish | undefined> => {
+          if (i < chain.length) {
+            const mw = chain[i]!;
+            const out = await mw({
+              ...(locals as any),
+              ...mwBase,
+              next: async (extra?: Record<string, any>) => {
+                if (extra && typeof extra === "object") Object.assign(locals, extra);
+                return await run(i + 1);
+              },
+            });
+            return out;
+          }
+          const finalCtx = { ...(locals as any), ...base } as any;
+          return await handler(finalCtx);
+        };
+        return await run(0);
       }
     }
     // Check children
     for (const ch of this.children) {
-      const out = await ch.dispatch(req, url);
+      const out = await ch.dispatch(req, url, inheritedLocals);
       if (out !== undefined) return out;
     }
     return undefined;
@@ -194,74 +165,4 @@ export class ApiComponent extends Component {
 
 export function api(path: string) {
   return new ApiComponent(path);
-}
-
-function createClientFacade(node: ApiComponent): ApiClient {
-  const getPattern = () => node.fullPattern();
-
-  const applyParams = (pattern: string, params?: Record<string, string | number>): string => {
-    if (!params) return pattern;
-    return pattern.replace(/:([A-Za-z0-9_]+)/g, (_, k) => {
-      const v = params[k];
-      if (v === undefined || v === null) throw new Error(`Missing param :${k}`);
-      return encodeURIComponent(String(v));
-    });
-  };
-
-  const buildUrl = (method: HttpMethod, args?: ApiClientRequestArgs): string => {
-    const pat = applyParams(getPattern(), args?.params);
-    const base = args?.baseUrl ? String(args.baseUrl).replace(/\/$/, "") : "";
-    const url = base + pat;
-    const query = args?.query || {};
-    const usp = new URLSearchParams();
-    for (const [k, v] of Object.entries(query)) {
-      if (v === undefined || v === null) continue;
-      if (Array.isArray(v)) v.forEach((it) => usp.append(k, String(it)));
-      else usp.append(k, String(v));
-    }
-    const qs = usp.toString();
-    return qs ? url + (url.includes("?") ? "&" : "?") + qs : url;
-  };
-
-  const parseBody = async (res: Response): Promise<any> => {
-    if (res.status === 204) return null;
-    const ct = res.headers.get("content-type") || "";
-    if (/application\/json/i.test(ct)) return await res.json();
-    return await res.text();
-  };
-
-  const call = async (method: HttpMethod, args?: ApiClientRequestArgs): Promise<any> => {
-    const url = buildUrl(method, args);
-    const headers = new Headers(args?.headers || {});
-    let bodyInit: BodyInit | undefined = undefined;
-    const hasBody = args && Object.prototype.hasOwnProperty.call(args, "body");
-    if (hasBody) {
-      const b = (args as any).body;
-      if (
-        b instanceof Blob ||
-        b instanceof ArrayBuffer ||
-        b instanceof FormData ||
-        typeof b === "string" ||
-        (typeof ReadableStream !== "undefined" && b instanceof ReadableStream)
-      ) bodyInit = b as any;
-      else { headers.set("Content-Type", headers.get("Content-Type") || "application/json"); bodyInit = JSON.stringify(b); }
-    }
-    const init: RequestInit = { ...(args?.init || {}), method, body: bodyInit, headers } as any;
-    const fetcher = (globalThis as any).fetch as typeof fetch;
-    if (typeof fetcher !== "function") throw new Error("global fetch is not available");
-    const res = await fetcher(url, init);
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(method + " " + getPattern() + " failed: " + res.status + " " + res.statusText + (txt ? ("\n" + txt) : ""));
-    }
-    return parseBody(res);
-  };
-
-  return {
-    get: (args?: Omit<ApiClientRequestArgs, "body">) => call("GET", args as any),
-    delete: (args?: Omit<ApiClientRequestArgs, "body">) => call("DELETE", args as any),
-    post: (args?: ApiClientRequestArgs) => call("POST", args),
-    put: (args?: ApiClientRequestArgs) => call("PUT", args),
-    patch: (args?: ApiClientRequestArgs) => call("PATCH", args),
-  };
 }

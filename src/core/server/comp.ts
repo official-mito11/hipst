@@ -1,16 +1,19 @@
 import { Component } from "../comp";
-import { ApiComponent, type Finalish, type FinalResult } from "./api";
+import { ApiComponent } from "./api";
+import { createResponseKit, toResponse, type Finalish, type FinalResult } from "../http/response";
+import { parseBody } from "../http/body";
+import type { Middleware } from "./middleware";
 import type { HtmlRoot } from "../ui/factory";
 import { UIComponent } from "../ui/comp";
 import { renderToString } from "../ui/render";
 import { resolve as pathResolve } from "path";
  
-
-export class Server extends Component {
+export class Server<L extends object = {}> extends Component {
   private _server?: Bun.Server;
-  private apis: ApiComponent[] = [];
+  private apis: ApiComponent<any>[] = [];
   private uiRoot?: HtmlRoot | UIComponent;
   private statics: Array<{ mount: string; dir: string }> = [];
+  private middlewares: Array<Middleware<any, any>> = [];
   // CSR configuration & in-memory built assets
   private csrEnabled = false;
   private csrEntry?: string;
@@ -30,12 +33,17 @@ export class Server extends Component {
     super();
   }
 
-  route(node: ApiComponent | HtmlRoot | UIComponent): this {
+  route(node: ApiComponent<any> | HtmlRoot | UIComponent): this {
     if (node instanceof ApiComponent) this.apis.push(node);
     else {
       this.uiRoot = node as any;
     }
     return this;
+  }
+
+  use<Add extends object>(mw: Middleware<L, Add>): Server<L & Add> {
+    this.middlewares.push(mw as any);
+    return this as unknown as Server<L & Add>;
   }
 
   /**
@@ -268,25 +276,44 @@ if (el && Root) mount(Root, el);
     return this;
   }
 
-  private toResponse(out: Finalish): Response {
-    if (out instanceof Response) return out;
-    const r = out as FinalResult;
-    if (r && (r as any).__hipst_final) {
-      const headers = new Headers(r.headers);
-      return new Response(r.body, { status: r.status, headers });
-    }
-    // default JSON
-    return new Response(JSON.stringify(out), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
   listen(port: number, cb?: (server: Bun.Server) => void) {
     this._server = Bun.serve({
       port: port,
-      fetch: async (req) => {
+      fetch: async (req: Request) => {
         const url = new URL(req.url);
+        const headers = req.headers;
+        // Build shared response helpers and parse body once for server-level middleware
+        const { statusFn, headerFn, resFn } = createResponseKit();
+        let body: any = await parseBody(req, headers);
+
+        // Run server-level middlewares
+        const locals: Record<string, any> = {};
+        const query: Record<string, string> = {};
+        url.searchParams.forEach((v, k) => (query[k] = v));
+        const runServer = async (i: number): Promise<Finalish | undefined> => {
+          if (i < this.middlewares.length) {
+            const mw = this.middlewares[i]!;
+            return await mw({
+              ...(locals as any),
+              req,
+              url,
+              query,
+              param: {},
+              header: headerFn,
+              status: statusFn,
+              res: resFn,
+              body,
+              headers,
+              next: async (extra?: Record<string, any>) => {
+                if (extra && typeof extra === "object") Object.assign(locals, extra);
+                return await runServer(i + 1);
+              },
+            } as any);
+          }
+          return undefined;
+        };
+        const pre = await runServer(0);
+        if (pre !== undefined) return toResponse(pre as any);
         // Serve internal CSR assets
         if (this.csrEnabled) {
           if (url.pathname === "/_hipst/app.mjs" || url.pathname === "/_hipst/app.js") {
@@ -376,8 +403,8 @@ if (el && Root) mount(Root, el);
 
         // API routing
         for (const api of this.apis) {
-          const out = await api.dispatch(req, url);
-          if (out !== undefined) return this.toResponse(out);
+          const out = await api.dispatch(req, url, locals);
+          if (out !== undefined) return toResponse(out);
         }
 
         // UI fallback for GET
@@ -391,9 +418,9 @@ if (el && Root) mount(Root, el);
         }
         return new Response("Not Found", { status: 404 });
       },
-    });
+    } as any);
     cb?.(this._server);
   }
 }
 
-export function server(): Server { return new Server() }
+export function server<T extends object = {}>(): Server<T> { return new Server() as unknown as Server<T> }
