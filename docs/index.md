@@ -5,7 +5,7 @@ hipst는 Bun 위에서 동작하는 간결한 풀스택 프레임워크입니다
 - 최소 의존성, 빠른 스타트업
 - SSR + CSR 번들 자동 주입
 - 함수형/체이닝 UI DSL
-- 간단한 API 라우팅 및 클라이언트 코드 생성
+- 간단한 API 라우팅
 
 ## 요구사항
 - Bun 1.2+ (bun install / bun run)
@@ -23,7 +23,6 @@ bun install
 - FE-only 빌드: docs/fe-build.md
 - API: docs/api.md
 - UI DSL: docs/ui.md
-- API 클라이언트 코드생성: docs/codegen.md
 - 마이그레이션: docs/migration.md
 
 ## 예제

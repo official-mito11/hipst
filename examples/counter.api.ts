@@ -1,4 +1,4 @@
-import { api } from "../src/core/server/api";
+import { api } from "../index.ts";
 
 export const myApi = api("/hyunho")
 .get(({res, query}) => {

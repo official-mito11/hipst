@@ -26,9 +26,9 @@
     "example:counter": "bun run examples/counter.ts",
     "example:static": "bun run examples/static.ts",
     "dev:counter": "bun --hot examples/counter.ts",
-    "serve:counter": "bun run hipst serve --ui examples/counter.app.ts#App --api examples/counter.api.ts#myApi --csr examples/counter.client.ts --port 3000",
+    "serve:counter": "bun run hipst serve --ui examples/counter.app.ts#App --api examples/counter.api.ts#myApi --port 3000",
     "fe:build": "bun run hipst build",
-    "example:fe:counter": "bun run hipst build --app examples/counter.app.ts#App --csr examples/counter.client.ts --out dist/counter-fe"
+    "example:fe:counter": "bun run hipst build --app examples/counter.app.ts#App --out dist/counter-fe"
   },
   "dependencies": {
     "csstype": "^3.1.3"

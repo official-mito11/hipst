@@ -1,32 +1,33 @@
 import { renderToString } from "../../index";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { runCodegen } from "./codegen";
 
 function parseArgs(argv: string[]) {
-  const out: Record<string, string | boolean> = {};
+  const out: any = { };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]!;
-    if (!a.startsWith("--")) continue;
+    if (a === "--") break;
+    if (!a.startsWith("-")) { out.appPos = a; continue; }
     const eq = a.indexOf("=");
-    if (eq > -1) {
-      out[a.slice(2, eq)] = a.slice(eq + 1);
-    } else {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next && !next.startsWith("--")) { out[key] = next; i++; }
-      else out[key] = true;
+    if (a === "--client") { out.client = true; continue; }
+    if (a.startsWith("--")) {
+      if (eq > -1) out[a.slice(2, eq)] = a.slice(eq + 1);
+      else {
+        const key = a.slice(2);
+        const next = argv[i + 1];
+        if (next && !next.startsWith("--")) { out[key] = next; i++; }
+        else out[key] = true;
+      }
     }
   }
   return out as {
-    app?: string;
+    app?: string; // legacy --app
+    appPos?: string; // positional
     out?: string;
-    csr?: string;
+    csr?: string; // legacy explicit client entry
+    client?: boolean; // new flag
     minify?: string | boolean;
     sourcemap?: string;
-    "codegen-api"?: string;
-    "codegen-out"?: string;
-    "codegen-base-url"?: string;
   };
 }
 
@@ -45,26 +46,34 @@ async function readOutputText(art: any): Promise<string> {
   return String(t ?? "");
 }
 
-function injectCSR(html: string, hasCss: boolean): string {
+function injectCSR(html: string, hasCss: boolean, csrOnly = false): string {
   const link = hasCss ? '<link rel="stylesheet" href="./app.css">' : '';
   const script = '<script type="module" src="./app.mjs"></script>';
   if (hasCss) html = html.replace(/<head(\s*[^>]*)>/i, (m) => m + link);
-  html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
-  html = html.replace(/<\/body>/i, '</div>' + script + '</body>');
+  if (csrOnly) {
+    html = html.replace(/<body(\s*[^>]*)>.*?<\/body>/is, (m, g1) => `<body${g1}><div id="__hipst_app__"></div>${script}</body>`);
+  } else {
+    html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
+    html = html.replace(/<\/body>/i, '</div>' + script + '</body>');
+  }
   return html;
 }
 
 export async function runFeBuild(argv: string[] = Bun.argv) {
   const args = parseArgs(argv);
-  const appArg = args.app;
-  if (!appArg) {
-    console.error("Usage: hipst build --app <path>[#export] [--csr <clientEntry>] [--out <dir>] [--minify true|false] [--sourcemap external|inline|none] [--codegen-api <path>[#export]] [--codegen-out <file|dir>] [--codegen-base-url <url>]  (alias: fe-build)");
+  const appSpec = args.appPos || args.app;
+  if (!appSpec) {
+    console.error("Usage: hipst build <AppFilePath[#Export]> [--client] [--out <dir>] [--minify true|false] [--sourcemap external|inline|none]  (alias: fe-build)\n\nNotes: --client builds CSR-only HTML; default builds SSR HTML + CSR assets. Legacy --app/--csr are supported.");
     process.exit(1);
   }
-  const [appPathRaw, exportName] = String(appArg!).split("#") as [string, string?];
+  const [appPathRaw, exportName] = String(appSpec!).split("#") as [string, string?];
   const appPath = resolve(process.cwd(), appPathRaw);
   const mod = await import(appPath);
   const root = exportName ? mod[exportName] : (mod.default ?? mod.App);
+  if (args.client && exportName && exportName !== "default") {
+    console.error("--client requires the app to be exported as default (no #Export override).");
+    process.exit(1);
+  }
   if (!root) {
     console.error(`Could not find export '${exportName || "default|App"}' in ${appPath}`);
     process.exit(1);
@@ -75,26 +84,14 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
   const outDir = resolve(process.cwd(), String(args.out || "dist/fe"));
   mkdirSync(outDir, { recursive: true });
 
-  // Optional: API client code generation
-  if (args["codegen-api"]) {
-    try {
-      const cgOut = await runCodegen({
-        api: String(args["codegen-api"]),
-        out: args["codegen-out"] ? String(args["codegen-out"]) : undefined,
-        baseUrl: args["codegen-base-url"] ? String(args["codegen-base-url"]) : undefined,
-      });
-      console.log("hipst build: codegen wrote", cgOut);
-    } catch (e) {
-      console.error("hipst build: codegen failed", e);
-      process.exitCode = 1;
-    }
-  }
+  // Build path selection
+  const sourcemap = (args.sourcemap ?? "external") as "external" | "inline" | "none";
+  const minify = args.minify === undefined ? true : String(args.minify) !== "false";
 
-  const csrEntry = args.csr ? resolve(process.cwd(), String(args.csr)) : undefined;
-  if (csrEntry) {
-    const sourcemap = (args.sourcemap ?? "external") as "external" | "inline" | "none";
-    const minify = args.minify === undefined ? true : String(args.minify) !== "false";
-    const out = await Bun.build({ entrypoints: [csrEntry], target: "browser", format: "esm", sourcemap: sourcemap as any, minify });
+  const explicitEntry = args.csr ? resolve(process.cwd(), String(args.csr)) : undefined;
+  if (explicitEntry) {
+    // Legacy/explicit path: build single bundle
+    const out = await Bun.build({ entrypoints: [explicitEntry], target: "browser", format: "esm", sourcemap: sourcemap as any, minify });
     if (!out.success) {
       console.error("hipst build: CSR build failed", out);
     } else {
@@ -125,8 +122,79 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
         writeFileSync(resolve(outDir, "app.css"), css, "utf-8");
       }
       if (cssMap) writeFileSync(resolve(outDir, "app.css.map"), cssMap, "utf-8");
-      html = injectCSR(html, !!css);
+      html = injectCSR(html, !!css, !!args.client);
     }
+  } else {
+    // Auto mode: build UI module and runtime separately, concatenate CSS, emit wrapper
+    const entryOut = await Bun.build({ entrypoints: [appPath], target: "browser", format: "esm", sourcemap: sourcemap as any, minify });
+    if (!entryOut.success) {
+      console.error("hipst build: UI entry build failed", entryOut);
+      process.exit(1);
+    }
+    let entryJs: string | undefined;
+    let entryMap: string | undefined;
+    for (const art of entryOut.outputs) {
+      const p = art.path.toLowerCase();
+      if (p.endsWith(".js") || p.endsWith(".mjs")) entryJs = await readOutputText(art);
+      else if (p.endsWith(".map")) entryMap = await readOutputText(art);
+    }
+
+    // Resolve runtime path relative to this file (TS or JS)
+    let runtimePath = new URL("../core/ui/runtime.ts", import.meta.url).pathname;
+    if (!(await Bun.file(runtimePath).exists())) {
+      runtimePath = new URL("../core/ui/runtime.js", import.meta.url).pathname;
+    }
+    const runtimeOut = await Bun.build({ entrypoints: [runtimePath], target: "browser", format: "esm", sourcemap: sourcemap as any, minify });
+    if (!runtimeOut.success) {
+      console.error("hipst build: runtime build failed", runtimeOut);
+      process.exit(1);
+    }
+    let runtimeJs: string | undefined;
+    let runtimeMap: string | undefined;
+    for (const art of runtimeOut.outputs) {
+      const p = art.path.toLowerCase();
+      if (p.endsWith(".js") || p.endsWith(".mjs")) runtimeJs = await readOutputText(art);
+      else if (p.endsWith(".map")) runtimeMap = await readOutputText(art);
+    }
+
+    // Collect CSS from HtmlRoot
+    const cssList: string[] = [];
+    const r: any = root as any;
+    const headCss: string[] | undefined = r && typeof r === "object" && Array.isArray(r.headCss) ? r.headCss : (typeof r?.headCss === "function" ? r.headCss() : undefined);
+    if (Array.isArray(headCss)) {
+      for (const css of headCss) {
+        if (typeof css === "string" && css) cssList.push(resolve(process.cwd(), css));
+      }
+    }
+    let cssCombined = "";
+    for (const p of cssList) {
+      try { cssCombined += (await Bun.file(p).text()) + "\n"; } catch {}
+    }
+
+    // Emit files
+    if (entryJs) {
+      const normalized = entryJs.replace(/\/# sourceMappingURL=.*$/m, '//# sourceMappingURL=app.entry.mjs.map');
+      writeFileSync(resolve(outDir, "app.entry.mjs"), normalized, "utf-8");
+    }
+    if (entryMap) writeFileSync(resolve(outDir, "app.entry.mjs.map"), entryMap, "utf-8");
+    if (runtimeJs) {
+      const normalized = runtimeJs.replace(/\/# sourceMappingURL=.*$/m, '//# sourceMappingURL=runtime.mjs.map');
+      writeFileSync(resolve(outDir, "runtime.mjs"), normalized, "utf-8");
+    }
+    if (runtimeMap) writeFileSync(resolve(outDir, "runtime.mjs.map"), runtimeMap, "utf-8");
+    if (cssCombined) writeFileSync(resolve(outDir, "app.css"), cssCombined, "utf-8");
+
+    // Wrapper that mounts UI when loaded
+    const wrapper = `// auto wrapper (fe-build)
+import { mount } from "./runtime.mjs";
+import * as Mod from "./app.entry.mjs";
+const Root = ${exportName ? `Mod[${JSON.stringify(exportName)}]` : `(Mod as any).default ?? (Mod as any).App`};
+const el = document.getElementById("__hipst_app__");
+if (el && Root) mount(Root, el);
+`;
+    writeFileSync(resolve(outDir, "app.mjs"), wrapper, "utf-8");
+
+    html = injectCSR(html, !!cssCombined, !!args.client);
   }
 
   const htmlPath = resolve(outDir, "index.html");

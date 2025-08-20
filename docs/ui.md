@@ -53,9 +53,16 @@ ui("div").prop("bg", (c, v: string) => c.self.style({ background: v }))
 
 ## CSR 마운트
 SSR HTML 내 컨테이너(`#__hipst_app__`)에 클라이언트에서 마운트합니다.
+
+- 기본적으로 `server().route(App)` 또는 `hipst build --app ...`를 사용하면 클라이언트 엔트리가 자동 생성/번들되어 `mount(App, ...)`가 호출됩니다.
+- 직접 엔트리를 작성하고 싶다면 아래처럼 사용할 수 있습니다.
+
 ```ts
+// examples/manual.client.ts (선택 사항: 명시 엔트리를 쓸 때만)
 import { mount } from "hipst";
 import { App } from "./app";
 
 mount(App, document.getElementById("__hipst_app__")!);
 ```
+
+스타일은 `html()` 루트에서 `.css(path)`로 선언하세요. 선언된 CSS는 CSR 번들에 포함됩니다.

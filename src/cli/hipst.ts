@@ -7,10 +7,20 @@ function usage() {
 Hipst CLI
 
 Usage:
-  hipst build    --app <path>[#export] [--csr <clientEntry>] [--out <dir>] [--minify true|false] [--sourcemap external|inline|none] [--codegen-api <path>[#export]] [--codegen-out <file|dir>] [--codegen-base-url <url>]
-  hipst fe-build (alias of build)
-  hipst serve --ui <path>[#export] [--api <path>[#export]] [--csr <clientEntry>] [--port <number>]
-`);
+  hipst serve <AppFilePath[#Export]> [options]
+    --csr                 Use CSR-only (no SSR body)
+    --port, -p <number>   Port
+    --watch, -w           Hot reload (TBD)
+
+  hipst build <AppFilePath[#Export]> [options]
+    --client              Build as FE client (default builds SSR HTML + CSR assets)
+    --out <dir>           Output dir (default: dist/fe)
+    --minify <bool>       Minify (default: true)
+    --sourcemap <mode>    external|inline|none (default: external)
+
+  Notes:
+    - Legacy flags are still supported: serve --ui/--api ..., build --app ...
+  `);
 }
 
 export async function main(argv: string[] = Bun.argv) {

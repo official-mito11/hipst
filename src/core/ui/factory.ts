@@ -6,6 +6,7 @@ import type { ValueOrFn } from "../context";
 export class HtmlRoot extends UIComponent<"__html_root__"> {
   private _title?: ValueOrFn<string, UIContext<this>>;
   private _metas: Record<string, ValueOrFn<string, UIContext<this>>> = {};
+  private _css: string[] = [];
 
   constructor() {
     super("__html_root__");
@@ -22,8 +23,18 @@ export class HtmlRoot extends UIComponent<"__html_root__"> {
     return this;
   }
 
+  /**
+   * Declare a CSS file to be included by the client runtime bundle when CSR is enabled.
+   * The path should be resolvable from the project root (absolute or relative).
+   */
+  css(path: string): this {
+    if (path) this._css.push(path);
+    return this;
+  }
+
   get headTitle() { return this._title; }
   get headMetas() { return this._metas; }
+  get headCss() { return this._css.slice(); }
 }
 
 function flatten<T>(arr: T[]): T[] {

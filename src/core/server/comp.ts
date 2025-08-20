@@ -4,6 +4,7 @@ import type { HtmlRoot } from "../ui/factory";
 import { UIComponent } from "../ui/comp";
 import { renderToString } from "../ui/render";
 import { resolve as pathResolve } from "path";
+ 
 
 export class Server extends Component {
   private _server?: Bun.Server;
@@ -13,10 +14,16 @@ export class Server extends Component {
   // CSR configuration & in-memory built assets
   private csrEnabled = false;
   private csrEntry?: string;
+  private csrAutoSpec?: { modulePath: string; exportName?: string };
+  private csrOnlyMode = false;
   private csrBuilt?: {
-    js: string;
-    css?: string;
-    map?: string;
+    js: string; // wrapper or explicit bundle
+    entry?: string; // bundled UI module (when auto)
+    runtime?: string; // bundled runtime (when auto)
+    css?: string; // concatenated HtmlRoot.css()
+    map?: string; // map for js (only when explicit entry)
+    entryMap?: string; // map for entry (when auto)
+    runtimeMap?: string; // map for runtime (when auto)
   };
 
   constructor() {
@@ -25,7 +32,9 @@ export class Server extends Component {
 
   route(node: ApiComponent | HtmlRoot | UIComponent): this {
     if (node instanceof ApiComponent) this.apis.push(node);
-    else this.uiRoot = node as any;
+    else {
+      this.uiRoot = node as any;
+    }
     return this;
   }
 
@@ -44,54 +53,93 @@ export class Server extends Component {
     return this;
   }
 
-  private async findDefaultClientEntry(): Promise<string | undefined> {
-    const cwd = process.cwd();
-    // 1) package.json configuration (preferred)
-    try {
-      const pkgFile = Bun.file(pathResolve(cwd, "package.json"));
-      if (await pkgFile.exists()) {
-        const pkg = JSON.parse(await pkgFile.text());
-        const cfg: string | undefined =
-          pkg?.hipst?.client ?? pkg?.hipst?.csr?.entry ?? pkg?.hipst?.csrEntry;
-        if (cfg) return pathResolve(cwd, cfg);
-      }
-    } catch { /* ignore */ }
-
-    // 2) Glob search for a conventional client entry
-    try {
-      const glob = new Bun.Glob("**/*.client.{ts,tsx,js,jsx}");
-      for await (const p of glob.scan({ cwd })) {
-        return pathResolve(cwd, p);
-      }
-    } catch { /* ignore */ }
-    return undefined;
+  /**
+   * Configure CSR to be auto-generated from the UI module path & export name.
+   * This avoids requiring a separate client entry file.
+   */
+  csrAutoFrom(uiModulePath: string, exportName?: string): this {
+    this.csrEnabled = true;
+    this.csrAutoSpec = { modulePath: uiModulePath, exportName };
+    return this;
   }
+
+  /** Enable CSR-only mode (no SSR body content). */
+  csrOnly(): this {
+    this.csrEnabled = true;
+    this.csrOnlyMode = true;
+    return this;
+  }
+
+  // No longer auto-discovers .client.* entries; CSR is generated from UI module or explicit entry.
 
   private async ensureClientBuilt(): Promise<void> {
     if (!this.csrEnabled) return;
     if (this.csrBuilt) return;
-    const entry = this.csrEntry ?? (await this.findDefaultClientEntry());
-    if (!entry) {
-      // No client entry found; provide empty assets so tags don't 404
-      this.csrBuilt = { js: "" };
+    const cwd = process.cwd();
+    const auto = !this.csrEntry && this.csrAutoSpec;
+
+    if (!auto) {
+      // Explicit entry: build as a single bundle and serve directly
+      const entry = this.csrEntry!;
+      const out = await Bun.build({
+        entrypoints: [entry],
+        target: "browser",
+        format: "esm",
+        minify: true,
+        sourcemap: "external",
+      });
+      if (!out.success) {
+        console.error("hipst: CSR build failed", out);
+        this.csrBuilt = { js: "" };
+        return;
+      }
+      let js: string | undefined;
+      let css: string | undefined;
+      let map: string | undefined;
+      for (const art of out.outputs) {
+        const p = art.path.toLowerCase();
+        const getText = async (): Promise<string> => {
+          const a: any = art as any;
+          if (typeof a.text === "function") return await a.text();
+          if (typeof a.arrayBuffer === "function") {
+            const ab: ArrayBuffer = await a.arrayBuffer();
+            return new TextDecoder().decode(new Uint8Array(ab));
+          }
+          if (typeof a.bytes === "function") {
+            const u8: Uint8Array = await a.bytes();
+            return new TextDecoder().decode(u8);
+          }
+          const t = a.text;
+          if (typeof t === "string") return t;
+          return String(t ?? "");
+        };
+        if (p.endsWith(".js") || p.endsWith(".mjs")) js = await getText();
+        else if (p.endsWith(".css")) css = await getText();
+        else if (p.endsWith(".map")) map = await getText();
+      }
+      this.csrBuilt = { js: js ?? "", css, map };
       return;
     }
-    const out = await Bun.build({
-      entrypoints: [entry],
+
+    // Auto mode: build UI module and runtime separately, concatenate CSS from HtmlRoot, and serve via wrapper
+    const { modulePath: modPath, exportName: ex } = this.csrAutoSpec!;
+
+    // Build UI module
+    const entryOut = await Bun.build({
+      entrypoints: [modPath],
       target: "browser",
       format: "esm",
       minify: true,
       sourcemap: "external",
     });
-    if (!out.success) {
-      console.error("hipst: CSR build failed", out);
+    if (!entryOut.success) {
+      console.error("hipst: UI entry build failed", entryOut);
       this.csrBuilt = { js: "" };
       return;
     }
-    let js: string | undefined;
-    let css: string | undefined;
-    let map: string | undefined;
-    for (const art of out.outputs) {
+    let entryJs: string | undefined;
+    let entryMap: string | undefined;
+    for (const art of entryOut.outputs) {
       const p = art.path.toLowerCase();
       const getText = async (): Promise<string> => {
         const a: any = art as any;
@@ -108,23 +156,102 @@ export class Server extends Component {
         if (typeof t === "string") return t;
         return String(t ?? "");
       };
-      if (p.endsWith(".js") || p.endsWith(".mjs")) js = await getText();
-      else if (p.endsWith(".css")) css = await getText();
-      else if (p.endsWith(".map")) map = await getText();
+      if (p.endsWith(".js") || p.endsWith(".mjs")) entryJs = await getText();
+      else if (p.endsWith(".map")) entryMap = await getText();
     }
-    this.csrBuilt = { js: js ?? "", css, map };
+
+    // Build runtime module (resolve relative to this file; support TS or JS)
+    let runtimePath = new URL("../ui/runtime.ts", import.meta.url).pathname;
+    if (!(await Bun.file(runtimePath).exists())) {
+      runtimePath = new URL("../ui/runtime.js", import.meta.url).pathname;
+    }
+    const runtimeOut = await Bun.build({
+      entrypoints: [runtimePath],
+      target: "browser",
+      format: "esm",
+      minify: true,
+      sourcemap: "external",
+    });
+    if (!runtimeOut.success) {
+      console.error("hipst: runtime build failed", runtimeOut);
+      this.csrBuilt = { js: "" };
+      return;
+    }
+    let runtimeJs: string | undefined;
+    let runtimeMap: string | undefined;
+    for (const art of runtimeOut.outputs) {
+      const p = art.path.toLowerCase();
+      const getText = async (): Promise<string> => {
+        const a: any = art as any;
+        if (typeof a.text === "function") return await a.text();
+        if (typeof a.arrayBuffer === "function") {
+          const ab: ArrayBuffer = await a.arrayBuffer();
+          return new TextDecoder().decode(new Uint8Array(ab));
+        }
+        if (typeof a.bytes === "function") {
+          const u8: Uint8Array = await a.bytes();
+          return new TextDecoder().decode(u8);
+        }
+        const t = a.text;
+        if (typeof t === "string") return t;
+        return String(t ?? "");
+      };
+      if (p.endsWith(".js") || p.endsWith(".mjs")) runtimeJs = await getText();
+      else if (p.endsWith(".map")) runtimeMap = await getText();
+    }
+
+    // Collect CSS from HtmlRoot and concatenate
+    const cssList: string[] = [];
+    const r: any = this.uiRoot as any;
+    const headCss: string[] | undefined = r && typeof r === "object" && Array.isArray(r.headCss) ? r.headCss : (typeof r?.headCss === "function" ? r.headCss() : undefined);
+    if (Array.isArray(headCss)) {
+      for (const css of headCss) {
+        if (typeof css === "string" && css) {
+          const absCss = css.startsWith("/") || css.startsWith(".") ? pathResolve(cwd, css) : pathResolve(cwd, css);
+          cssList.push(absCss);
+        }
+      }
+    }
+    let cssCombined = "";
+    for (const p of cssList) {
+      try { cssCombined += (await Bun.file(p).text()) + "\n"; } catch {}
+    }
+
+    // Wrapper JS served as /_hipst/app.mjs
+    const wrapper =
+`// auto wrapper (in-memory)
+import { mount } from "/_hipst/runtime.mjs";
+import * as Mod from "/_hipst/app.entry.mjs";
+const Root = ${ex ? `Mod[${JSON.stringify(ex)}]` : `(Mod as any).default ?? (Mod as any).App`};
+const el = document.getElementById("__hipst_app__");
+if (el && Root) mount(Root, el);
+`;
+
+    this.csrBuilt = {
+      js: wrapper,
+      entry: entryJs ?? "",
+      runtime: runtimeJs ?? "",
+      css: cssCombined || undefined,
+      entryMap,
+      runtimeMap,
+    };
   }
 
-  private injectCSR(html: string): string {
+  private injectCSR(html: string, emptyBody = false): string {
     if (!this.csrEnabled) return html;
     // Inject link/script and wrap body content in a mount container
     const link = '<link rel="stylesheet" href="/_hipst/app.css">';
     const script = '<script type="module" src="/_hipst/app.mjs"></script>';
     // head injection
     html = html.replace(/<head(\s*[^>]*)>/i, (m) => m + link);
-    // body wrap
-    html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
-    html = html.replace(/<\/body>/i, '</div>' + script + '</body>');
+    if (emptyBody) {
+      // Replace body content entirely with empty mount container + script
+      html = html.replace(/<body(\s*[^>]*)>.*?<\/body>/is, (m, g1) => `<body${g1}><div id="__hipst_app__"></div>${script}</body>`);
+    } else {
+      // body wrap existing SSR content
+      html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
+      html = html.replace(/<\/body>/i, '</div>' + script + '</body>');
+    }
     return html;
   }
 
@@ -165,6 +292,22 @@ export class Server extends Component {
           if (url.pathname === "/_hipst/app.mjs" || url.pathname === "/_hipst/app.js") {
             await this.ensureClientBuilt();
             const body = this.csrBuilt?.js ?? "";
+            return new Response(body, {
+              status: 200,
+              headers: { "Content-Type": "application/javascript; charset=utf-8" },
+            });
+          }
+          if (url.pathname === "/_hipst/app.entry.mjs") {
+            await this.ensureClientBuilt();
+            const body = this.csrBuilt?.entry ?? "";
+            return new Response(body, {
+              status: 200,
+              headers: { "Content-Type": "application/javascript; charset=utf-8" },
+            });
+          }
+          if (url.pathname === "/_hipst/runtime.mjs") {
+            await this.ensureClientBuilt();
+            const body = this.csrBuilt?.runtime ?? "";
             return new Response(body, {
               status: 200,
               headers: { "Content-Type": "application/javascript; charset=utf-8" },
@@ -240,7 +383,7 @@ export class Server extends Component {
         // UI fallback for GET
         if (req.method === "GET" && this.uiRoot) {
           let html = renderToString(this.uiRoot);
-          html = this.injectCSR(html);
+          html = this.injectCSR(html, this.csrOnlyMode);
           return new Response(html, {
             status: 200,
             headers: { "Content-Type": "text/html; charset=utf-8" },

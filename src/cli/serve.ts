@@ -1,68 +1,36 @@
 import { server } from "../../index";
 import { resolve } from "node:path";
-import { readdirSync, statSync, readFileSync } from "node:fs";
 
 function parseArgs(argv: string[]) {
-  const out: Record<string, string | boolean> = {};
+  const out: {
+    app?: string; // positional path[#export]
+    ui?: string; // legacy
+    api?: string; // legacy
+    csrOnly?: boolean; // --csr
+    watch?: boolean; // -w/--watch
+    port?: string; // -p/--port
+  } = {} as any;
+
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]!;
-    if (!a.startsWith("--")) continue;
-    const eq = a.indexOf("=");
-    if (eq > -1) out[a.slice(2, eq)] = a.slice(eq + 1);
-    else {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next && !next.startsWith("--")) { out[key] = next; i++; }
-      else out[key] = true;
+    if (a === "--") break;
+    if (a === "--watch" || a === "-w") { out.watch = true; continue; }
+    if (a === "--csr") { out.csrOnly = true; continue; }
+    if (a.startsWith("--port=")) { out.port = a.slice("--port=".length); continue; }
+    if (a === "--port" || a === "-p") {
+      const n = argv[i + 1];
+      if (n && !n.startsWith("-")) { out.port = n; i++; } else out.port = "";
+      continue;
     }
+    // legacy flags
+    if (a.startsWith("--ui=")) { out.ui = a.slice("--ui=".length); continue; }
+    if (a === "--ui") { const n = argv[i + 1]; if (n) { out.ui = n; i++; } continue; }
+    if (a.startsWith("--api=")) { out.api = a.slice("--api=".length); continue; }
+    if (a === "--api") { const n = argv[i + 1]; if (n) { out.api = n; i++; } continue; }
+    // first non-flag -> app positional
+    if (!a.startsWith("-")) { if (!out.app) out.app = a; continue; }
   }
-  return out as {
-    ui?: string; // path[#export]
-    api?: string; // path[#export]
-    csr?: string; // path to client entry
-    port?: string;
-  };
-}
-
-function readHipstClientFromPackageJson(cwd: string): string | undefined {
-  try {
-    const pkgJson = readFileSync(resolve(cwd, "package.json"), "utf-8");
-    const pkg = JSON.parse(pkgJson);
-    const client = pkg?.hipst?.client;
-    if (typeof client === "string" && client.length) return resolve(cwd, client);
-  } catch {}
-  return undefined;
-}
-
-function findFirstClientEntry(root: string): string | undefined {
-  const exts = [".ts", ".tsx", ".js", ".jsx"];
-  const ignore = new Set(["node_modules", "dist", ".git", "build", "coverage", ".cache", ".next", "out", ".turbo"]);
-  function walk(dir: string): string | undefined {
-    let entries: string[] = [];
-    try { entries = readdirSync(dir); } catch { return undefined; }
-    for (const name of entries) {
-      if (ignore.has(name)) continue;
-      const abs = resolve(dir, name);
-      let st; try { st = statSync(abs); } catch { continue; }
-      if (st.isDirectory()) {
-        const found = walk(abs);
-        if (found) return found;
-      } else {
-        for (const ext of exts) {
-          if (name.endsWith(`.client${ext}`)) return abs;
-        }
-      }
-    }
-    return undefined;
-  }
-  return walk(root);
-}
-
-function resolveCsrEntryFromArgsOrAuto(arg?: string): string | undefined {
-  if (arg) return resolve(process.cwd(), String(arg));
-  const fromPkg = readHipstClientFromPackageJson(process.cwd());
-  if (fromPkg) return fromPkg;
-  return findFirstClientEntry(process.cwd());
+  return out;
 }
 
 export async function runServe(argv: string[] = Bun.argv) {
@@ -71,38 +39,36 @@ export async function runServe(argv: string[] = Bun.argv) {
 
   const s = server();
 
-  const csrAbs = resolveCsrEntryFromArgsOrAuto(args.csr ? String(args.csr) : undefined);
-  if (csrAbs) {
-    if (!args.csr) console.log(`hipst serve: auto-detected CSR entry: ${csrAbs}`);
-    s.csr(csrAbs);
+  const cwd = process.cwd();
+  const uiSpec = args.app || args.ui; // prefer positional
+  if (!uiSpec) {
+    console.error("Usage: hipst serve <AppFilePath[#Export]> [--csr] [--port|-p <number>] [--watch|-w]");
+    process.exit(1);
   }
-
-  if (args.ui) {
-    const [p, ex] = String(args.ui).split("#") as [string, string?];
-    const abs = resolve(process.cwd(), p);
-    const mod = await import(abs);
-    const root = ex ? mod[ex] : (mod.default ?? mod.App);
-    if (!root) {
-      console.error(`Could not find export '${ex || "default|App"}' in ${abs}`);
-      process.exit(1);
-    }
-    s.route(root);
+  const [p, ex] = String(uiSpec).split("#") as [string, string?];
+  const abs = resolve(cwd, p);
+  const mod = await import(abs);
+  const root = ex ? mod[ex] : (mod.default ?? mod.App);
+  if (!root) {
+    console.error(`Could not find export '${ex || "default|App"}' in ${abs}`);
+    process.exit(1);
   }
+  // CSR is opt-in: --csr -> enable CSR-only (no SSR body)
+  if (args.csrOnly) s.csrAutoFrom(abs, ex).csrOnly();
+  s.route(root);
 
+  // legacy API support if provided
   if (args.api) {
-    const [p, ex] = String(args.api).split("#") as [string, string?];
-    const abs = resolve(process.cwd(), p);
-    const mod = await import(abs);
-    const apiNode = ex ? mod[ex] : (mod.default);
-    if (!apiNode) {
-      console.error(`Could not find export '${ex || "default"}' in ${abs}`);
-      process.exit(1);
-    }
-    s.route(apiNode);
+    const [ap, aex] = String(args.api).split("#") as [string, string?];
+    const aabs = resolve(cwd, ap);
+    const amod = await import(aabs);
+    const apiNode = aex ? amod[aex] : (amod.default);
+    if (apiNode) s.route(apiNode);
   }
 
   s.listen(port, () => {
     console.log(`hipst serve: http://localhost:${port}`);
+    if (args.watch) console.log("[watch] hot reload is not implemented yet");
   });
 }
 

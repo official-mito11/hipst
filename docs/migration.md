@@ -14,21 +14,15 @@
     bun run hipst serve \
       --ui path/to/app.ts#App \
       --api path/to/api.ts#default \
-      --csr path/to/client.ts \
       --port 3000
     ```
   - FE-only 풀 빌드(HTML + JS + CSS + maps):
     ```bash
     bun run hipst build \
       --app path/to/app.ts#App \
-      --csr path/to/client.ts \
       --out dist/my-app \
-      [--codegen-api path/to/api.ts#default] \
-      [--codegen-out dist/client/api.client.ts] \
-      [--codegen-base-url http://localhost:3000]
     ```
 - 참고: `fe-build`는 `build`의 별칭으로 계속 동작합니다.
-- 코드생성은 `build` 명령에 통합되었으며 `--codegen-*` 플래그로 제어합니다.
 
 ## 3) 타입/런타임 정리
 - DOM/스타일 타입 개선, UI 상태 프록시 일원화 등 내부 리팩터링이 반영되었습니다.
@@ -36,13 +30,13 @@
   - UI 상태는 `state(key, value)`/`state({ ... })`로 초기화하고 `state.foo = ...`로 갱신합니다.
 
 ## 4) CSR 번들 주입
-- 서버/FE 빌드 시 자동으로 `/_hipst/app.css`, `/_hipst/app.mjs` 또는 정적 빌드의 `app.css`, `app.mjs`가 주입됩니다.
-- 클라이언트 엔트리에서 `mount(App, document.getElementById("__hipst_app__")!)` 호출을 유지하세요.
+- UI 루트를 `server().route(App)` 또는 `hipst build --app ...`로 지정하면 CSR이 자동 활성화되고 클라이언트 엔트리가 자동 생성/번들되어 SSR HTML에 주입됩니다.
+- 직접 엔트리를 사용하고 싶다면 `server().csr(entry)` 또는 `--csr entry`를 선택적으로 지정하세요. 이 경우 엔트리에서 `mount(App, document.getElementById("__hipst_app__")!)`를 호출해야 합니다.
 
 ## 체크리스트
 - [ ] API에서 `handle` 이름을 사용했다면 `dispatch`로 변경
 - [ ] 로컬 스크립트 호출을 `bun run hipst ...`로 교체
-- [ ] FE-only 빌드: `--app`, `--csr`, `--out` 경로 점검
+- [ ] FE-only 빌드: `--app`, `--out` 경로 점검 (명시 엔트리를 쓸 경우에만 `--csr`)
 - [ ] 예제/문서 링크 갱신
 
 문제나 누락된 케이스가 있다면 이슈로 남겨주세요.
