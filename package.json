@@ -1,6 +1,6 @@
 {
   "name": "hipst",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Full-stack framework",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -8,8 +8,13 @@
   "type": "module",
   "author": "mito11",
   "license": "MIT",
-  "keywords": ["fullstack", "framework"],
-  "files": ["dist"],
+  "keywords": [
+    "fullstack",
+    "framework"
+  ],
+  "files": [
+    "dist"
+  ],
   "bin": {
     "hipst": "dist/src/cli/hipst.js"
   },
