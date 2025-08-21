@@ -1,4 +1,4 @@
-export { ui, html } from "./src/core/ui/factory";
+export { ui, html, component } from "./src/core/ui/factory";
 export { renderToString } from "./src/core/ui/render";
 export { ApiComponent, api } from "./src/core/server/api";
 export { middleware } from "./src/core/server/middleware";

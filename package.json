@@ -1,7 +1,7 @@
 {
   "name": "hipst",
   "version": "0.0.2",
-  "description": "fullstack framework",
+  "description": "Full-stack framework",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",

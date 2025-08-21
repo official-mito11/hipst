@@ -1,4 +1,4 @@
-import type { UIComponent } from "./comp";
+import type { UIComponent, ElementFromTag } from "./comp";
 
 // Lightweight state view used inside UIContext to avoid circular type instantiation with UIComponent.state
 export type StateCtx<S extends object = {}> = {
@@ -41,6 +41,12 @@ export interface UIContext<
   root?: UIComponent<any, any>;
 
   /**
+   * The concrete DOM element created for this component. Undefined for non-element contexts (e.g., HtmlRoot).
+   * Precisely typed by tag name when available.
+   */
+  element?: ElementFromTag<C extends UIComponent<infer TG, any, any> ? TG : string>;
+
+  /**
    * The state of the component.
    */
   state: StateCtx<S>;
@@ -60,4 +66,13 @@ export interface UIContext<
    * The attributes of the component.
    */
   attributes: C["attributes"];
+
+  /**
+   * Child nodes passed at call-time, resolved for ValueOrFn and unwrapped for callable components.
+   * Provided as a convenience for define()/effect() usage.
+   */
+  children: unknown[];
 }
+
+// Helper type to extract the tag name from a UIComponent
+export type TagOf<C extends UIComponent<any, any, any>> = C extends UIComponent<infer TG, any, any> ? TG : string;

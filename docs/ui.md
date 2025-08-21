@@ -10,7 +10,7 @@ export const App = html()
   .title("Title")
   .meta("description", "desc")
   (
-    ui("div").p(16).flexCol(
+    ui("div").padding(16).display("flex").flexDirection("column")(
       ui("h1")("Hello"),
       ui("button")
         .state("count", 0)
@@ -31,17 +31,12 @@ export const App = html()
 
 - Attributes: `.attr(name, value)` with values supporting `ValueOrFn` (`(ctx)=>...`).
 - Styles: `.style(key, value)` or `.style({ ... })` (typed via `csstype`).
-- Shorthands:
-  - `.id()`, `.className()`, `.class()`, `.classes()`
-  - `.htmlFor()`, `.type()`, `.checked()`, `.value()`
-  - `.display()`, `.flexDirection()`, `.flexCol()`, `.flexRow()`
-  - `.p()`, `.m()`, `.textCenter()`
 
 Spacing helpers:
-- `.p(value)` sets padding. `value` can be a number, string, or `(ctx)=>number|string`.
+- `.padding(value)` sets padding. `value` can be a number, string, or `(ctx)=>number|string`.
   - Numbers are auto-suffixed with `px`.
   - Functions are resolved with `UIContext` each render/effect.
-- `.m(value)` sets margin with the same rules as `.p()`.
+- `.margin(value)` sets margin with the same rules as `.padding()`.
 
 ## Events
 

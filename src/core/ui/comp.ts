@@ -32,7 +32,7 @@ type PropKeySet<P extends object> = string extends keyof P ? never : keyof P & s
 type PropMethods<Tag extends string, S extends object, P extends object> = {
   [K in PropKeySet<P>]: (
     value?: ValueOrFn<P[K], UIContext<UIComponent<Tag, S, P>, S, P>>
-  ) => WithCallable<UIComponent<Tag, S, P>>
+  ) => WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>
 };
 
 // Helpers to extract generics from a UIComponent type
@@ -41,7 +41,7 @@ type StateOf<C extends UIComponent<any, any, any>> = C extends UIComponent<any, 
 type PropsOf<C extends UIComponent<any, any, any>> = C extends UIComponent<any, any, infer PP> ? PP : {};
 
 // Derive DOM element and event map from Tag using lib.dom.d.ts
-type ElementFromTag<T extends string> =
+export type ElementFromTag<T extends string> =
   T extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[T] :
   T extends keyof SVGElementTagNameMap ? SVGElementTagNameMap[T] : Element;
 
@@ -64,6 +64,8 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
   private _stateProxy?: StateFacade<UIComponent<Tag, S, P>, S>;
   private _propsProxy?: PropsCtx<P>;
   private _children: Array<string | UIComponent<any, any, any> | ValueOrFn<string, any>> = [];
+  private _callArgs?: unknown[];
+  private _effects?: Array<(ctx: UIContext<UIComponent<Tag, S, P>, S, P>) => void>;
   private _events: Record<string, Array<(ctx: any, ev?: Event) => unknown>> = {};
   private _parent?: UIComponent<any, any>;
   private _root?: UIComponent<any, any>;
@@ -103,10 +105,12 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
       self: this,
       parent: this._parent,
       root: this._root,
+      element: undefined,
       state: this.state as unknown as import("./context").StateCtx<S>,
       props: this.props as any,
       styles: this._stylesStore as this["styles"],
       attributes: this._attrsStore as this["attributes"],
+      children: (this as any)._callArgs ?? [],
     };
   }
 
@@ -127,6 +131,10 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
         real.root = root as unknown as UIComponent<any, any> | undefined;
         this._children.push(real);
       } else {
+        // Ignore uninvoked factories so they don't render as text ValueOrFn
+        if (typeof k === "function" && (k as any).__hipst_factory__) {
+          continue;
+        }
         this._children.push(k);
       }
     }
@@ -260,24 +268,27 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
   }
 
   /**
+   * Register a reactive side-effect that runs with UIContext. It returns void and is cleaned up on unmount.
+   */
+  public effect(fn: (ctx: UIContext<this, S, P>) => void): this {
+    (this as any)._effects ||= [];
+    (this as any)._effects.push(fn as any);
+    return this;
+  }
+
+  /**
    * Define a custom call handler for this component while preserving children-call syntax.
    * Example:
    *  const Checkbox = ui('input').type('checkbox').define(({ self }, checked?: boolean) => self.attr('checked', !!checked))
    *  Checkbox(true) // -> sets checked
    *  Checkbox(ui('span')("label")) // -> appends children
    */
-  public define<A extends any[]>(
-    invoker: (ctx: UIContext<this, S, P>, ...args: A) => this | void
-  ): (WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) & ((...args: A) => WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) {
+  public define(
+    invoker: (ctx: UIContext<this, S, P>) => this | void
+  ): (WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) & ((...args: any[]) => WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) {
     const self = this as UIComponent<Tag, S, P>;
-    // Helper to check if a value is a valid child (string | UIComponent | function)
-    const isChild = (v: unknown): boolean => {
-      if (v == null) return false;
-      if (typeof v === "string") return true;
-      if (typeof v === "function") return true; // ValueOrFn<string, ...>
-      if (Array.isArray(v)) return v.every(isChild);
-      return v instanceof UIComponent;
-    };
+    // Expose invoker on instance so blueprint-based cloning can preserve call-time behavior
+    (self as any).__hipst_invoker__ = invoker as any;
     const flatten = (arr: any[]): any[] => {
       const out: any[] = [];
       for (const a of arr) {
@@ -286,19 +297,16 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
       return out;
     };
     const callable = toCallable<UIComponent<Tag, S, P>, any[], UIComponent<Tag, S, P>>(self, (s, ...args: any[]) => {
-      // If all args look like children (or no args), treat as children call; otherwise run invoker
-      const treatAsChildren = args.length === 0 || args.every(isChild);
-      if (treatAsChildren) {
-        (s as UIComponent<any, any, any>).append(...flatten(args) as any);
-        return s;
-      }
+      // Rewrapping semantics: capture call-time args as ctx.children and invoke user invoker.
+      (s as any)._callArgs = flatten(args);
+      trigger((s as any), "__call_args__");
       const ctx = (s as any).uiCtx() as UIContext<UIComponent<Tag, S, P>, S, P>;
-      (invoker as any)(ctx, ...args);
+      (invoker as any)(ctx);
       return s;
     });
     // Ensure other helpers (e.g., state facade) return the new callable
     (self as any).__hipst_callable__ = callable;
-    return callable as unknown as (WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) & ((...args: A) => WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>);
+    return callable as unknown as (WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) & ((...args: any[]) => WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>);
   }
 
   // Define a custom chainable method (fluent interface) using UIContext
@@ -318,6 +326,9 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
     if ((this as any)[name]) {
       throw new Error(`Method ${String(name)} already exists`);
     }
+    // Persist handler definition so blueprint clones can reattach methods bound to the new instance
+    const defs = ((this as any).__hipst_prop_defs__ ||= {});
+    defs[String(name)] = fn;
     Object.defineProperty(this, name, {
       // Accept optional value at runtime; compile-time optionality comes from overloads/MethodType
       value: (value?: ValueOrFn<T, UIContext<this, S, P>>) => {
@@ -372,10 +383,12 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
             self,
             parent: self.parent,
             root: self.root,
+            element: undefined,
             state: proxy as any,
             props: self.props as any,
             styles: (self as any)._stylesStore as any,
             attributes: (self as any)._attrsStore as any,
+            children: ((self as any)._callArgs ?? []) as unknown[],
           } as any;
           return resolveValue(ctx, raw as any);
         }
@@ -425,10 +438,12 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
           self,
           parent: self.parent,
           root: self.root,
+          element: undefined,
           state: self.state as any,
           props: proxy as any,
           styles: (self as any)._stylesStore as any,
           attributes: (self as any)._attrsStore as any,
+          children: ((self as any)._callArgs ?? []) as unknown[],
         } as any;
         return resolveValue(ctx, raw as any);
       },

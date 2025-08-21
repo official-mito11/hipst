@@ -1,20 +1,21 @@
-import { html, ui, ValueOrFn, UIContext } from "../index.ts";
+import { html, ui, ValueOrFn, UIContext, component } from "../index.ts";
 import { myApi } from "./counter.api.ts";
 
-const TestComponent = ui('div')
+const TestComponent = component(ui('div')
 .flexCol()
 .state("rv", 1)
 .state("omni", 0)
 .prop("r", ({self}, v?: string) => self.style("borderRadius", v || "1rem"))
 .prop("newt", ({self}, v: string) => self.style("margin", v || "1rem"))
 .style("textAlign", "center")
-.state("test", "test")
-.newt("24px")
-.r("1rem")
+.state("test", "1rem")
+)
 
-// Demo: Checkbox component using .define() to accept a boolean at call-time
+TestComponent.newt("24px").r(({state})=> state.test)( ({self}) => self.state.test )
+
+// Demo: Checkbox component using .define() to accept a boolean at call-time via ctx.children
 const Checkbox = ui('input').type('checkbox')
-  .define(({ self }, checked?: boolean) => self.attr('checked', !!checked));
+  .define(({ self, children }) => self.attr('checked', !!children[0]));
 
 export const App = html()
 .title("Counter")

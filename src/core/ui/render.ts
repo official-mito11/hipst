@@ -70,11 +70,19 @@ function renderNode(node: UIComponent<any, any>, root: UIComponent<any, any>): s
     self: node,
     parent: node.parent,
     root,
+    element: undefined,
     state: stateFacade,
     props: (node as any).props,
     styles: node["styles"],
     attributes: node["attributes"],
+    children: [] as any,
   } as any;
+  // Resolve children: unwrap callable components and resolve ValueOrFn with current ctx
+  (ctx as any).children = (((node as any)._callArgs) ?? []).map((v: any) => {
+    const u = unwrap(v);
+    if (u instanceof UIComponent) return u;
+    return resolveValue(ctx as any, v as any);
+  });
 
   const attrs = attrsToString(node, ctx);
   const open = attrs ? `<${node.tag} ${attrs}>` : `<${node.tag}>`;
@@ -115,11 +123,18 @@ export function renderToString(root: HtmlRoot | UIComponent<any, any>): string {
       self: r,
       parent: undefined,
       root: r,
+      element: undefined,
       state: stateFacade,
       props: (r as any).props,
       styles: (r as any).styles,
       attributes: (r as any).attributes,
+      children: [],
     } as UIContext<HtmlRoot>;
+    (ctx as any).children = (((r as any)._callArgs) ?? []).map((v: any) => {
+      const u = unwrap(v);
+      if (u instanceof UIComponent) return u;
+      return resolveValue(ctx as any, v as any);
+    });
     const title = (r as any).headTitle
       ? String(resolveValue(ctx, (r as any).headTitle as any))
       : "";

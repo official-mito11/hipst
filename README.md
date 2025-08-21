@@ -44,13 +44,13 @@
 bun install
 
 # Run an example (SSR + CSR assets)
-bun run hipst serve examples/counter.app.ts --port 3000
+hipst serve examples/counter.app.ts --port 3000
 
 # Build (SSR HTML + CSR assets): emits index.html + app.mjs (+ app.css) and supporting bundles
-bun run hipst build examples/counter.app.ts --out dist/counter-fe
+hipst build examples/counter.app.ts --out dist/counter-fe
 
 # Build (CSR-only HTML): emits index.html and supporting bundles
-bun run hipst build examples/counter.app.ts --client --out dist/counter-fe-client
+hipst build examples/counter.app.ts --client --out dist/counter-fe-client
 ```
 
 ## Tiny example
@@ -85,13 +85,13 @@ export const hello = api("/hello").get(({ res }) => res({ ok: true }));
 Serve locally:
 
 ```bash
-bun run hipst serve app.ts --port 3000
+hipst serve app.ts --port 3000
 ```
 
 Build static assets (SSR HTML + CSR assets):
 
 ```bash
-bun run hipst build app.ts --out dist/app
+hipst build app.ts --out dist/app
 ```
 
 ---

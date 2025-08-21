@@ -50,15 +50,29 @@ function mountComponent<T extends string, S extends object, P extends object>(
   const node = unwrap(nodeIn) as UIComponent<T, S, P>;
   const el = document.createElement(node.tag);
 
-  const ctx: UIContext<UIComponent<T, S, P>, S, P> = {
+  const baseCtx: UIContext<UIComponent<T, S, P>, S, P> = {
     self: node,
     parent: node.parent as unknown as UIComponent<string, LooseObj, LooseObj> | undefined,
     root,
+    element: el as any,
     state: node.state as unknown as StateCtx<S>,
     props: node.props as PropsCtx<P>,
     styles: node.styles,
     attributes: node.attributes,
-  };
+    children: [] as unknown[],
+  } as any;
+  // children should be reactive when accessed inside effect/value functions
+  Object.defineProperty(baseCtx, "children", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      track((node as unknown as object), "__call_args__");
+      const raw = (((node as any)._callArgs) ?? []) as unknown[];
+      // Unwrap callable proxies; do not execute function children here
+      return raw.map((v: any) => unwrap(v));
+    }
+  });
+  const ctx = baseCtx;
 
   // attributes: track keys and values, apply all each run, and remove deleted ones
   const rawAttrs: Record<string, unknown> = ((node as unknown) as { _attrsStore?: Record<string, unknown> })._attrsStore ?? {};
@@ -106,17 +120,18 @@ function mountComponent<T extends string, S extends object, P extends object>(
   for (const [evt, fns] of Object.entries(events)) {
     if (!Array.isArray(fns)) continue;
     el.addEventListener(evt, (ev: Event) => {
-      const callCtx: UIContext<UIComponent<T, S, P>, S, P> = {
-        self: node,
-        parent: node.parent as unknown as UIComponent<string, LooseObj, LooseObj> | undefined,
-        root,
-        state: node.state as unknown as StateCtx<S>,
-        props: node.props as PropsCtx<P>,
-        styles: node.styles,
-        attributes: node.attributes,
-      };
+      const callCtx = ctx;
       for (const fn of fns) fn(callCtx, ev);
     });
+  }
+
+  // user-defined effects registered via UIComponent.effect()
+  {
+    const list: Array<(c: UIContext<UIComponent<T, S, P>, S, P>) => void> = (((node as any)._effects) ?? []) as any;
+    for (const fn of list) {
+      const runner = effect(() => { fn(ctx); });
+      regEffect(el, runner);
+    }
   }
 
   // children: fully reactive list
@@ -132,8 +147,8 @@ function mountComponent<T extends string, S extends object, P extends object>(
       for (const child of childStore) {
         const real = unwrap(child);
         if (real instanceof UIComponent) {
-          const childEl = mountComponent(real as UIComponent<string, LooseObj, LooseObj>, el, root);
-          el.appendChild(childEl);
+          // mountComponent handles appending to container
+          mountComponent(real as UIComponent<string, LooseObj, LooseObj>, el, root);
         } else if (typeof child === "function") {
           const text = document.createTextNode("");
           el.appendChild(text);
@@ -185,10 +200,12 @@ export function mount(rootNode: HtmlRoot | UIComponent<string, LooseObj, LooseOb
       self: r,
       parent: undefined,
       root: r,
+      element: undefined,
       state: r.state as unknown as StateCtx<{}>,
       props: r.props as PropsCtx<{}>,
       styles: r.styles,
       attributes: r.attributes,
+      children: [],
     };
     const title = r.headTitle;
     if (title) {
@@ -204,7 +221,7 @@ export function mount(rootNode: HtmlRoot | UIComponent<string, LooseObj, LooseOb
     // Body children
     for (const c of (r.children as unknown as Array<unknown>)) {
       const real = unwrap(c);
-      if (real instanceof UIComponent) mountComponent(real as UIComponent<string, LooseObj, LooseObj>, container, r);
+      if (real instanceof UIComponent) mountComponent(real as UIComponent<string, LooseObj, LooseObj>, container, (r as unknown) as UIComponent<string, LooseObj, LooseObj>);
       else if (typeof c === "function") {
         const text = document.createTextNode("");
         container.appendChild(text);
