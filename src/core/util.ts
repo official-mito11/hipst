@@ -46,6 +46,19 @@ export function toCallable<T extends object, A extends any[], R = T>(
       if (prop === "__hipst_target__") {
         return target as any;
       }
+      // Ensure built-in function machinery works on the callable proxy itself
+      // so accessing .apply/.call/.bind (or function metadata) does not forward to the target object.
+      if (
+        prop === "apply" ||
+        prop === "call" ||
+        prop === "bind" ||
+        prop === "length" ||
+        prop === "name" ||
+        prop === "toString"
+      ) {
+        // Reflect off the underlying callable function, not the target object
+        return Reflect.get(callable as any, prop, receiver);
+      }
       const v = (target as any)[prop];
       if (typeof v === "function") {
         // Respect opt-out for wrapping (e.g., state facade proxy)

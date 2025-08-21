@@ -7,10 +7,14 @@ export interface FinalResult {
   body: BodyInit | null;
 }
 
+// Type helper that preserves the response body type at the type level only.
+// Runtime shape is still FinalResult; __type is never emitted.
+export type FinalResultOf<T> = FinalResult & { __type?: T };
+
 export interface ResponseBuilder {
   status: (code: number) => ResponseBuilder;
   header: (key: string | Record<string, string>, value?: string) => ResponseBuilder;
-  res: (body: any) => FinalResult;
+  res: <T>(body: T) => FinalResultOf<T>;
 }
 
 export function createResponseKit(initStatus = 200, initHeaders: Record<string, string> = {}) {

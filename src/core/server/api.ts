@@ -1,10 +1,11 @@
 import { Component } from "../comp";
 import { HttpMethod } from "../http/types";
-import { Finalish, FinalResult, ResponseBuilder, createResponseKit } from "../http/response";
+import { Finalish, FinalResult, ResponseBuilder, createResponseKit, type FinalResultOf } from "../http/response";
 import { Middleware, MiddlewareContext } from "./middleware";
 import { compilePath } from "./path";
 import { parseBody } from "../http/body";
-import { createClientFacade, type ApiClient, type ApiClientRequestArgs } from "./client";
+import { createClientFacade } from "./client";
+import type { ApiClientOf } from "./client";
 
 export type ApiContext<L extends object = {}> = {
   self: ApiComponent<any>;
@@ -22,13 +23,24 @@ export type ApiContext<L extends object = {}> = {
 
 export type Handler<L extends object = {}> = (ctx: ApiContext<L>) => Promise<Finalish> | Finalish;
 
-export class ApiComponent<L extends object = {}> extends Component {
+// Helper: Finalish with preserved body type via FinalResultOf
+export type FinalishOf<T> = Promise<FinalResultOf<T> | T> | FinalResultOf<T> | T;
+
+// Method type specs captured at the type level (phantom only)
+export type GetSpec<Q = unknown, P = unknown, R = unknown> = { query: Q; params: P; res: R };
+export type PostSpec<Q = unknown, P = unknown, B = unknown, R = unknown> = { query: Q; params: P; body: B; res: R };
+export type MethodSpec = {
+  GET?: GetSpec<any, any, any>;
+  POST?: PostSpec<any, any, any, any>;
+};
+
+export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> = {}> extends Component {
   public readonly basePath: string;
   private handlers: Partial<Record<HttpMethod, Handler<L>>> = {};
   private children: ApiComponent<any>[] = [];
   private parent?: ApiComponent<any>;
   private middlewares: Array<Middleware<any, any>> = [];
-  public readonly client: ApiClient;
+  public readonly client: ApiClientOf<ApiComponent<L, M>>;
   // Perf caches (invalidated on mutations)
   private _fullPatternCache?: string;
   private _compiledCache?: ReturnType<typeof compilePath>;
@@ -37,7 +49,7 @@ export class ApiComponent<L extends object = {}> extends Component {
   constructor(basePath: string) {
     super();
     this.basePath = basePath.startsWith("/") ? basePath : "/" + basePath;
-    this.client = createClientFacade(this as any);
+    this.client = createClientFacade(this as any) as any;
   }
 
   private invalidateCachesDeep(): void {
@@ -52,7 +64,7 @@ export class ApiComponent<L extends object = {}> extends Component {
     for (const ch of this.children) ch.invalidateMwChainDeep();
   }
 
-  route(child: ApiComponent<any>): this {
+  route(child: ApiComponent<any, any>): this {
     child.parent = this;
     this.children.push(child);
     // parent changed => child's pattern/chain depend on it
@@ -60,11 +72,11 @@ export class ApiComponent<L extends object = {}> extends Component {
     return this;
   }
 
-  use<Add extends object>(mw: Middleware<L, Add>): ApiComponent<L & Add> {
+  use<Add extends object>(mw: Middleware<L, Add>): ApiComponent<L & Add, M> {
     this.middlewares.push(mw as any);
     // adding middleware affects chain for self and descendants
     this.invalidateMwChainDeep();
-    return this as unknown as ApiComponent<L & Add>;
+    return this as unknown as ApiComponent<L & Add, M>;
   }
 
   on(method: HttpMethod, handler: Handler<L>): this {
@@ -72,8 +84,16 @@ export class ApiComponent<L extends object = {}> extends Component {
     return this;
   }
 
-  get(handler: Handler<L>): this { return this.on("GET", handler); }
-  post(handler: Handler<L>): this { return this.on("POST", handler); }
+  // Typed HTTP methods capturing request/response types
+  get<R = unknown, Q = unknown, Pm = unknown>(
+    handler: (ctx: ApiContext<L> & { query: Q; param: Pm }) => FinalishOf<R>
+  ): ApiComponent<L, M & { GET: GetSpec<Q, Pm, R> }> { return this.on("GET", handler as any) as any; }
+
+  post<B = unknown, R = unknown, Q = unknown, Pm = unknown>(
+    handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
+  ): ApiComponent<L, M & { POST: PostSpec<Q, Pm, B, R> }> { return this.on("POST", handler as any) as any; }
+
+  // The following are still available for server use but not part of client typing
   put(handler: Handler<L>): this { return this.on("PUT", handler); }
   patch(handler: Handler<L>): this { return this.on("PATCH", handler); }
   delete(handler: Handler<L>): this { return this.on("DELETE", handler); }

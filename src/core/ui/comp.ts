@@ -9,13 +9,13 @@ import type { MethodType } from "../util";
 
 type CSSProperties = CSSProps<string | number>;
 
-// A callable component where children value functions receive a context
-// whose parent is the concrete component type `C`.
+// A callable component where children value functions receive the full UIContext.
+// The parent in the context is refined to the provided generic `P` for better type inference via parentTyped().
 export type WithCallable<C extends UIComponent<any, any, any>, P = UIComponent<any, any, any>> = C & ((
   ...children: Array<
     | string
     | UIComponent<any, any, any>
-    | ValueOrFn<string, { self: C; parent?: P }>
+    | ValueOrFn<string, UIContext<C, StateOf<C>, PropsOf<C>> & { parent?: P }>
   >
 ) => C);
 
@@ -119,7 +119,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
     ...kids: Array<
       | string
       | UIComponent<any, any, any>
-      | ValueOrFn<string, { self: UIComponent<any, any>; parent?: UIComponent<any, any> }>
+      | ValueOrFn<string, UIContext<this, S, P>>
     >
   ): this {
     for (const k of kids) {
