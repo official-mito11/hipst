@@ -284,7 +284,7 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
    *  Checkbox(ui('span')("label")) // -> appends children
    */
   public define(
-    invoker: (ctx: UIContext<this, S, P>) => this | void
+    invoker: (ctx: UIContext<this, S, P>) => this
   ): (WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) & ((...args: any[]) => WithCallable<UIComponent<Tag, S, P>> & PropMethods<Tag, S, P>) {
     const self = this as UIComponent<Tag, S, P>;
     // Expose invoker on instance so blueprint-based cloning can preserve call-time behavior

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { ui, component, mount } from "../index.ts";
+import { ui, component, mount, UIComponent } from "../index";
 
 class FakeNode {
   childNodes: any[] = [];
@@ -59,16 +59,61 @@ beforeEach(() => {
   container = new FakeElement("div");
 });
 
+// ctx.children at define-time: does not execute function children on access
+it("ctx.children does not execute function children on access", () => {
+  let executed = 0;
+  const fnChild = () => { executed++; return "txt"; };
+  const childComp = ui("span")("c");
+
+  const Parent = ui("div").define(({ self, children }) => {
+    // Access should not execute fnChild
+    return self.attr("data-first-type", typeof children[0])
+    // Accessing callable proxy shouldn't execute either
+    .attr("data-second-type", typeof children[1]);
+  });
+
+  const inst = Parent(fnChild, childComp);
+  const root = ui("div")(inst);
+  expect(executed).toBe(0);
+
+  mount(root as any, container as any);
+  // After mount, call-time function children are NOT auto-rendered; they remain only in ctx.children
+  // so the function should not have executed.
+  expect(executed).toBe(0);
+
+  const parentEl = container.childNodes[0].childNodes[0] as FakeElement;
+  expect(parentEl.getAttribute("data-first-type")).toBe("function");
+  expect(parentEl.getAttribute("data-second-type")).toBe("function");
+});
+
+// component(ui(...).define(...)) cloning preserves define invoker semantics
+it("component() preserves define invoker semantics and reacts to arg changes", () => {
+  const tmpl = ui("span").define(({ self }) =>
+    self.attr("data-val", (ctx) => String(ctx.children[0]))
+  );
+  const F = component(tmpl);
+  const inst = F("a") as any;
+
+  const parent = ui("div")(inst);
+  mount(parent as any, container as any);
+
+  const spanEl = findFirstByTag(container, "span") as FakeElement;
+  expect(spanEl.getAttribute("data-val")).toBe("a");
+
+  (inst as any).__hipst_callable__("b");
+  expect(spanEl.getAttribute("data-val")).toBe("b");
+});
+
 // .define() rewrapping semantics and reactive ctx.children
 it("define rewrapping exposes call-time args via ctx.children and reacts to updates", () => {
   const Checkbox = component(
-    ui("input").type("checkbox").define(({ self, children }) =>
-      self.attr("data-checked", (ctx) => (ctx.children[0] ? "1" : "0"))
+    ui("input").type("checkbox").define(({ self }) =>
+      self.attr("data-checked", (ctx) => String(ctx.children[0]))
     )
   );
 
   const parent = ui("div");
-  const inst = Checkbox(true) as any; // concrete instance to be updated later
+  const inst = Checkbox("1") as any; // concrete instance to be updated later
   parent(inst);
 
   mount(parent as any, container as any);
@@ -77,8 +122,8 @@ it("define rewrapping exposes call-time args via ctx.children and reacts to upda
   expect(inputEl).toBeTruthy();
   expect(inputEl.getAttribute("data-checked")).toBe("1");
 
-  // Update call-time args on the same instance; should trigger reactive attr update
-  (inst as any)(false);
+  // Update call-time args on the same instance via callable proxy; should trigger reactive attr update
+  (inst as any).__hipst_callable__("0");
   expect(inputEl.getAttribute("data-checked")).toBe("0");
 });
 
@@ -91,9 +136,9 @@ it("effect receives element and re-runs on state updates", () => {
   const parent = ui("div")(comp);
   mount(parent as any, container as any);
 
-  const divEl = findFirstByTag(container, "div") as FakeElement; // parent div
-  // The first child div is the component itself
-  const innerDiv = divEl.childNodes.find((c: any) => c instanceof FakeElement && c !== divEl) as FakeElement;
+  // container -> [root div] -> [component div]
+  const rootDiv = container.childNodes.find((c: any) => c instanceof FakeElement) as FakeElement;
+  const innerDiv = rootDiv.childNodes.find((c: any) => c instanceof FakeElement) as FakeElement;
   expect(innerDiv.getAttribute("data-x")).toBe("1");
 
   (comp as any).state("x", 2);
@@ -118,7 +163,7 @@ it("event handlers receive UIContext and can mutate attributes", () => {
 
 // Children value functions render and react to state changes
 it("child value functions render text and react to state updates", () => {
-  const comp = ui("div").state("n", 1)(({ state }) => String(state.n));
+  const comp = ui("div").state("n", 1)(({ self }) => String(self.state.n));
   const parent = ui("div")(comp);
 
   mount(parent as any, container as any);
@@ -129,4 +174,29 @@ it("child value functions render text and react to state updates", () => {
   (comp as any).state("n", 2);
   const text2 = findFirstText(container)!;
   expect(text2.data).toBe("2");
+});
+
+// Effect cleanup on unmount: effects stop running after container remount
+it("cleans up effects on unmount/remount", () => {
+  let runs = 0;
+  const comp = ui("div").state("x", 1).effect(({ state }) => {
+    // access state.x to create reactive dependency
+    void state.x;
+    runs++;
+  });
+
+  const parent = ui("div")(comp);
+  mount(parent as any, container as any);
+  expect(runs).toBe(1);
+
+  (comp as any).state("x", 2);
+  expect(runs).toBe(2);
+
+  // Remount different content into same container; should cleanup previous effects
+  const other = ui("div")("new");
+  mount(other as any, container as any);
+
+  // Update state on previously mounted component; its effects should no longer run
+  (comp as any).state("x", 3);
+  expect(runs).toBe(2);
 });
