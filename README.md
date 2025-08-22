@@ -73,7 +73,7 @@ const App = html()
   )
 );
 
-const Api = api("/")
+const Api = api("/api")
 .get(({ res }) => res("Hello Hipst"))
 
 server()
