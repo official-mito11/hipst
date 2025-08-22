@@ -44,7 +44,7 @@ export const App = html()
     .onClick(async ({ parent, state }) => {
       state.selfstate = state.selfstate + 1;
       const data = await myApi.client.get({query:{q:"gay"}});
-      if (parent) parent.state.api = String(data ?? "");
+      if (parent) parent.state.api = String(data.msg ?? "");
     })
     ("Fetch API"),
     ui("p")(({ parent }) => String(parent?.state.api ?? ""))

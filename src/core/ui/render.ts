@@ -17,13 +17,20 @@ function camelToKebab(s: string) {
   return s.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
 }
 
+type StyleValue = string | number | boolean | ((c: UIContext<UIComponent<any, any>>) => string | number | boolean);
+interface HasStylesStore { _stylesStore?: Record<string, StyleValue> }
+
 function styleToString(comp: UIComponent<any, any>, ctx: UIContext<UIComponent<any, any>>): string {
   const parts: string[] = [];
-  for (const key of Object.keys(comp.styles) as any) {
-    const raw = (comp as any)._stylesStore?.[key];
-    const v = resolveValue(ctx, raw);
+  // Use internal styles store with a safe fallback to the public styles getter
+  const storeFromPrivate = (comp as HasStylesStore)._stylesStore;
+  const publicStyles = comp.styles as Record<string, StyleValue>;
+  const rawStyles: Record<string, StyleValue> = storeFromPrivate ?? publicStyles ?? {};
+  for (const key of Object.keys(rawStyles)) {
+    const raw = rawStyles[key];
+    const v = resolveValue<string | number | boolean, UIContext<UIComponent<any, any>>>(ctx, raw as (StyleValue));
     if (v === undefined || v === null || v === false) continue;
-    const name = camelToKebab(String(key));
+    const name = camelToKebab(key);
     parts.push(`${name}:${String(v)}`);
   }
   return parts.join(";");

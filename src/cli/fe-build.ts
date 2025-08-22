@@ -1,6 +1,7 @@
 import { renderToString } from "../../index";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { injectHtmlAssets } from "../core/html/inject";
 
 function parseArgs(argv: string[]) {
   const out: any = { };
@@ -47,16 +48,15 @@ async function readOutputText(art: any): Promise<string> {
 }
 
 function injectCSR(html: string, hasCss: boolean, csrOnly = false): string {
-  const link = hasCss ? '<link rel="stylesheet" href="./app.css">' : '';
-  const script = '<script type="module" src="./app.mjs"></script>';
-  if (hasCss) html = html.replace(/<head(\s*[^>]*)>/i, (m) => m + link);
-  if (csrOnly) {
-    html = html.replace(/<body(\s*[^>]*)>.*?<\/body>/is, (m, g1) => `<body${g1}><div id="__hipst_app__"></div>${script}</body>`);
-  } else {
-    html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
-    html = html.replace(/<\/body>/i, '</div>' + script + '</body>');
-  }
-  return html;
+  return injectHtmlAssets(html, {
+    // Build output is static; no HMR here
+    hmr: { enabled: false },
+    csr: {
+      scriptSrc: "./app.mjs",
+      cssHref: hasCss ? "./app.css" : undefined,
+      csrOnly,
+    },
+  });
 }
 
 export async function runFeBuild(argv: string[] = Bun.argv) {

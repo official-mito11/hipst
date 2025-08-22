@@ -1,4 +1,4 @@
-import { server } from "../../index";
+import { Server } from "../../index";
 import { resolve } from "node:path";
 import { watch } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -39,19 +39,14 @@ export async function runServe(argv: string[] = Bun.argv) {
   const args = parseArgs(argv);
   const port = args.port ? parseInt(String(args.port), 10) : 3000;
 
-  const s = server();
-  if (args.watch) s.enableHMR();
-
   const cwd = process.cwd();
-  const uiSpec = args.app || args.ui; // prefer positional
+  const uiSpec = args.app || args.ui; // prefer positional (legacy --ui kept for compat)
   if (!uiSpec) {
-    console.error("Usage: hipst serve <AppFilePath[#Export]> [--csr] [--port|-p <number>] [--watch|-w]");
+    console.error("Usage: hipst serve <ServerFilePath[#Export]> [--port|-p <number>] [--watch|-w]");
     process.exit(1);
   }
   const [p, ex] = String(uiSpec).split("#") as [string, string?];
   const abs = resolve(cwd, p);
-  let apiSpecAbs: string | undefined;
-  let apiExport: string | undefined;
   // Helper: import with cache-busting for HMR
   let bust = 0;
   const importFresh = async (p: string) => {
@@ -61,71 +56,61 @@ export async function runServe(argv: string[] = Bun.argv) {
   };
 
   const mod = await importFresh(abs);
-  const root = ex ? mod[ex] : (mod.default ?? mod.App);
-  if (!root) {
-    console.error(`Could not find export '${ex || "default|App"}' in ${abs}`);
+  const exported = ex ? mod[ex] : (mod.default);
+  if (!exported) {
+    console.error(`Could not find export '${ex || "default"}' in ${abs}`);
     process.exit(1);
   }
-  // CSR is opt-in: --csr -> enable CSR-only (no SSR body)
-  if (args.csrOnly) s.csrAutoFrom(abs, ex).csrOnly();
-  s.route(root);
-
-  // legacy API support if provided
-  if (args.api) {
-    const [ap, aex] = String(args.api).split("#") as [string, string?];
-    apiSpecAbs = resolve(cwd, ap);
-    apiExport = aex;
-    const amod = await importFresh(apiSpecAbs);
-    const apiNode = aex ? amod[aex] : (amod.default);
-    if (apiNode) s.route(apiNode);
+  // Accept only a Server instance (server component). FE root is not served here.
+  if (!(exported instanceof Server)) {
+    console.error(`hipst serve expects a Server instance export. Got '${typeof exported}'.`);
+    console.error(`Tip: export default server().route(...); // without .listen()`);
+    process.exit(1);
   }
+  let s = exported as Server;
+  if (args.watch) s.enableHMR();
 
   // Generate and inject docs (compile-time via TS) for app and optional legacy api
   try {
     const { generateDocs } = await import("./docs-gen");
-    s.setDocs(generateDocs([abs, ...(apiSpecAbs ? [apiSpecAbs] : [])]));
+    s.setDocs(generateDocs([abs]));
   } catch {}
 
   s.listen(port, () => {
     console.log(`hipst serve: http://localhost:${port}`);
-    if (args.watch) console.log("[watch] HMR enabled (watching app file)");
   });
 
-  // Basic file watching (app + optional legacy api). On change, hot-reload routes and notify clients.
+  // Watch mode: restart server on file change and trigger HMR reload in clients
   if (args.watch) {
-    const filesToWatch = [abs];
-    if (apiSpecAbs) filesToWatch.push(apiSpecAbs);
-
-    const reload = async () => {
+    const restart = async () => {
       try {
-        s.resetRoutes();
-        if (args.csrOnly) s.csrAutoFrom(abs, ex).csrOnly();
-        s.invalidateClientBuild();
+        // Notify clients to reload before restarting
+        try { (s as any).hmrBroadcast?.(); } catch {}
+        // Close current server
+        try { s.close(); } catch {}
+        // Re-import module fresh
         const mod = await importFresh(abs);
-        const root = ex ? mod[ex] : (mod.default ?? mod.App);
-        if (root) s.route(root);
-        if (apiSpecAbs) {
-          const amod = await importFresh(apiSpecAbs);
-          const apiNode = apiExport ? amod[apiExport] : (amod.default);
-          if (apiNode) s.route(apiNode);
+        const next = ex ? mod[ex] : (mod.default);
+        if (!(next instanceof Server)) {
+          console.error(`[watch] export is not a Server instance after reload. Skipping restart.`);
+          return;
         }
+        s = next as Server;
+        s.enableHMR();
         try {
           const { generateDocs } = await import("./docs-gen");
-          s.setDocs(generateDocs([abs, ...(apiSpecAbs ? [apiSpecAbs] : [])]));
+          s.setDocs(generateDocs([abs]));
         } catch {}
-        s.hmrBroadcast();
-        console.log("[watch] reloaded routes");
+        s.listen(port, () => console.log(`[watch] restarted at http://localhost:${port}`));
       } catch (e) {
-        console.error("[watch] reload failed:", e);
+        console.error("[watch] restart failed:", e);
       }
     };
-
-    for (const f of filesToWatch) {
-      try {
-        watch(f, { persistent: true }, (_event) => reload());
-      } catch (e) {
-        console.warn("[watch] could not watch:", f, e);
-      }
+    try {
+      watch(abs, { persistent: true }, (_event) => restart());
+      console.log("[watch] watching:", abs);
+    } catch (e) {
+      console.warn("[watch] could not watch:", abs, e);
     }
   }
 }

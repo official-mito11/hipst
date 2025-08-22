@@ -12,11 +12,14 @@ const App = html()
       .display("flex")
       .flexDirection("column")
       .p(16)
+      .style("gap", "10px")
       (
         ui("h1")("Hello hipst"),
-        ui("p")("Welcome to hipst example")
+        ui("p")("Welcome to hipst example"),
+        ui("button").onClick(() => {
+          alert("Button clicked");
+        })("Click me")
       )
   );
 
-const s = server().route(hello).route(App).listen(3000);
-console.log("Server running at http://localhost:3000");
+export default server().route(hello).route(App).listen(3000);

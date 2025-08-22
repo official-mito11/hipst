@@ -23,6 +23,14 @@ export type ApiContext<L extends object = {}> = {
 
 export type Handler<L extends object = {}> = (ctx: ApiContext<L>) => Promise<Finalish> | Finalish;
 
+// Helpers: extract response type R from a handler's return type
+type InferResFromFinalish<T> = T extends Promise<infer P>
+  ? InferResFromFinalish<P>
+  : T extends FinalResultOf<infer R>
+    ? R
+    : T;
+type InferResFromHandler<H> = H extends (ctx: any) => infer Ret ? InferResFromFinalish<Ret> : unknown;
+
 // Helper: Finalish with preserved body type via FinalResultOf
 export type FinalishOf<T> = Promise<FinalResultOf<T> | T> | FinalResultOf<T> | T;
 
@@ -76,7 +84,11 @@ export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> =
   private children: ApiComponent<any>[] = [];
   private parent?: ApiComponent<any>;
   private middlewares: Array<Middleware<any, any>> = [];
-  public readonly client: ApiClientOf<ApiComponent<L, M>>;
+  private _clientFacade?: any;
+  public get client(): ApiClientOf<this> {
+    // Lazily memoize to avoid re-creating facade; typing preserved via getter return type
+    return (this._clientFacade ??= createClientFacade(this)) as ApiClientOf<this>;
+  }
   // Perf caches (invalidated on mutations)
   private _fullPatternCache?: string;
   private _compiledCache?: ReturnType<typeof compilePath>;
@@ -86,7 +98,6 @@ export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> =
   constructor(basePath: string) {
     super();
     this.basePath = basePath.startsWith("/") ? basePath : "/" + basePath;
-    this.client = createClientFacade(this as any) as any;
   }
 
   private invalidateCachesDeep(): void {
@@ -130,53 +141,139 @@ export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> =
   }
 
   // Typed HTTP methods capturing request/response types
-  // Overload A: explicit Spec generic
+  // Overload 0: infer R from handler return type (robust against generic ctx.res)
+  get<H extends (ctx: ApiContext<L> & { query: Record<string, unknown>; param: Record<string, unknown> }) => any>(
+    handler: H
+  ): ApiComponent<L, M & { GET: GetSpec<unknown, unknown, InferResFromHandler<H>> }>;
+  // Overload A: explicit Spec generic, res type in parameter position for inference
   get<S extends GetSpec<any, any, any>>(
-    handler: (ctx: ApiContext<L> & { query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+    handler: (
+      ctx: ApiContext<L> & {
+        query: S["query"];
+        param: S["params"];
+        res: (body: S["res"]) => FinalResultOf<S["res"]>;
+      }
+    ) => FinalishOf<S["res"]>
   ): ApiComponent<L, M & { GET: S }>;
   // Overload B: infer or explicit with param order <Q, Pm, R>
   get<Q = unknown, Pm = unknown, R = unknown>(
-    handler: (ctx: ApiContext<L> & { query: Q; param: Pm }) => FinalishOf<R>
+    handler: (
+      ctx: ApiContext<L> & {
+        query: Q;
+        param: Pm;
+        res: (body: R) => FinalResultOf<R>;
+      }
+    ) => FinalishOf<R>
   ): ApiComponent<L, M & { GET: GetSpec<Q, Pm, R> }>;
   get(handler: any): any { return this.on("GET", handler as any) as any; }
 
-  // Overload A: explicit Spec generic
+  // Overload 0: infer R from handler return type (robust against generic ctx.res)
+  post<H extends (ctx: ApiContext<L> & { body: unknown; query: Record<string, unknown>; param: Record<string, unknown> }) => any>(
+    handler: H
+  ): ApiComponent<L, M & { POST: PostSpec<unknown, unknown, unknown, InferResFromHandler<H>> }>;
+  // Overload A: explicit Spec generic, res type in parameter position for inference
   post<S extends PostSpec<any, any, any, any>>(
-    handler: (ctx: ApiContext<L> & { body: S["body"]; query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+    handler: (
+      ctx: ApiContext<L> & {
+        body: S["body"];
+        query: S["query"];
+        param: S["params"];
+        res: (body: S["res"]) => FinalResultOf<S["res"]>;
+      }
+    ) => FinalishOf<S["res"]>
   ): ApiComponent<L, M & { POST: S }>;
   // Overload B: infer or explicit with param order <Q, Pm, B, R>
   post<Q = unknown, Pm = unknown, B = unknown, R = unknown>(
-    handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
+    handler: (
+      ctx: ApiContext<L> & {
+        body: B;
+        query: Q;
+        param: Pm;
+        res: (body: R) => FinalResultOf<R>;
+      }
+    ) => FinalishOf<R>
   ): ApiComponent<L, M & { POST: PostSpec<Q, Pm, B, R> }>;
   post(handler: any): any { return this.on("POST", handler as any) as any; }
 
-  // Overload A: explicit Spec generic
+  // Overload 0: infer R from handler return type (robust against generic ctx.res)
+  put<H extends (ctx: ApiContext<L> & { body: unknown; query: Record<string, unknown>; param: Record<string, unknown> }) => any>(
+    handler: H
+  ): ApiComponent<L, M & { PUT: PutSpec<unknown, unknown, unknown, InferResFromHandler<H>> }>;
+  // Overload A: explicit Spec generic, res type in parameter position for inference
   put<S extends PutSpec<any, any, any, any>>(
-    handler: (ctx: ApiContext<L> & { body: S["body"]; query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+    handler: (
+      ctx: ApiContext<L> & {
+        body: S["body"];
+        query: S["query"];
+        param: S["params"];
+        res: (body: S["res"]) => FinalResultOf<S["res"]>;
+      }
+    ) => FinalishOf<S["res"]>
   ): ApiComponent<L, M & { PUT: S }>;
   // Overload B: infer or explicit with param order <Q, Pm, B, R>
   put<Q = unknown, Pm = unknown, B = unknown, R = unknown>(
-    handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
+    handler: (
+      ctx: ApiContext<L> & {
+        body: B;
+        query: Q;
+        param: Pm;
+        res: (body: R) => FinalResultOf<R>;
+      }
+    ) => FinalishOf<R>
   ): ApiComponent<L, M & { PUT: PutSpec<Q, Pm, B, R> }>;
   put(handler: any): any { return this.on("PUT", handler as any) as any; }
 
-  // Overload A: explicit Spec generic
+  // Overload 0: infer R from handler return type (robust against generic ctx.res)
+  patch<H extends (ctx: ApiContext<L> & { body: unknown; query: Record<string, unknown>; param: Record<string, unknown> }) => any>(
+    handler: H
+  ): ApiComponent<L, M & { PATCH: PatchSpec<unknown, unknown, unknown, InferResFromHandler<H>> }>;
+  // Overload A: explicit Spec generic, res type in parameter position for inference
   patch<S extends PatchSpec<any, any, any, any>>(
-    handler: (ctx: ApiContext<L> & { body: S["body"]; query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+    handler: (
+      ctx: ApiContext<L> & {
+        body: S["body"];
+        query: S["query"];
+        param: S["params"];
+        res: (body: S["res"]) => FinalResultOf<S["res"]>;
+      }
+    ) => FinalishOf<S["res"]>
   ): ApiComponent<L, M & { PATCH: S }>;
   // Overload B: infer or explicit with param order <Q, Pm, B, R>
   patch<Q = unknown, Pm = unknown, B = unknown, R = unknown>(
-    handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
+    handler: (
+      ctx: ApiContext<L> & {
+        body: B;
+        query: Q;
+        param: Pm;
+        res: (body: R) => FinalResultOf<R>;
+      }
+    ) => FinalishOf<R>
   ): ApiComponent<L, M & { PATCH: PatchSpec<Q, Pm, B, R> }>;
   patch(handler: any): any { return this.on("PATCH", handler as any) as any; }
 
-  // Overload A: explicit Spec generic
+  // Overload 0: infer R from handler return type (robust against generic ctx.res)
+  delete<H extends (ctx: ApiContext<L> & { query: Record<string, unknown>; param: Record<string, unknown> }) => any>(
+    handler: H
+  ): ApiComponent<L, M & { DELETE: DeleteSpec<unknown, unknown, InferResFromHandler<H>> }>;
+  // Overload A: explicit Spec generic, res type in parameter position for inference
   delete<S extends DeleteSpec<any, any, any>>(
-    handler: (ctx: ApiContext<L> & { query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+    handler: (
+      ctx: ApiContext<L> & {
+        query: S["query"];
+        param: S["params"];
+        res: (body: S["res"]) => FinalResultOf<S["res"]>;
+      }
+    ) => FinalishOf<S["res"]>
   ): ApiComponent<L, M & { DELETE: S }>;
   // Overload B: infer or explicit with param order <Q, Pm, R>
   delete<Q = unknown, Pm = unknown, R = unknown>(
-    handler: (ctx: ApiContext<L> & { query: Q; param: Pm }) => FinalishOf<R>
+    handler: (
+      ctx: ApiContext<L> & {
+        query: Q;
+        param: Pm;
+        res: (body: R) => FinalResultOf<R>;
+      }
+    ) => FinalishOf<R>
   ): ApiComponent<L, M & { DELETE: DeleteSpec<Q, Pm, R> }>;
   delete(handler: any): any { return this.on("DELETE", handler as any) as any; }
 

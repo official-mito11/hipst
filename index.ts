@@ -13,3 +13,5 @@ export { server } from "./src/core/server/comp";
 // Types
 export type { Middleware, MiddlewareContext } from "./src/core/server/middleware";
 export type { ApiContext } from "./src/core/server/api";
+export type { ApiClientOf } from "./src/core/server/client";
+export type { GetSpec, PostSpec, PutSpec, PatchSpec, DeleteSpec, MethodSpec } from "./src/core/server/api";

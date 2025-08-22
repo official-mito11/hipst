@@ -1,4 +1,4 @@
-import { api, middleware } from "../index.ts";
+import { api, ApiContext, middleware } from "../index.ts";
 
 type JwtPayload = { sub: string; name: string };
 
@@ -34,5 +34,5 @@ export const myApi = api("/auth/me")
   })
   .put(({body, res}) => {
     const { data } = body;
-    return res({ data })
+    return res(`just for test: ${data.toString()}`)
   });

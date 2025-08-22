@@ -6,6 +6,7 @@ import type { Middleware } from "./middleware";
 import type { HtmlRoot } from "../ui/factory";
 import { UIComponent } from "../ui/comp";
 import { renderToString } from "../ui/render";
+import { injectHtmlAssets } from "../html/inject";
 import { resolve as pathResolve } from "path";
  
 export class Server<L extends object = {}> extends Component {
@@ -285,24 +286,14 @@ if (el && Root) mount(Root, el);
   }
 
   private injectCSR(html: string, emptyBody = false): string {
-    if (!this.csrEnabled) return html;
-    // Inject link/script and wrap body content in a mount container
-    const link = '<link rel="stylesheet" href="/_hipst/app.css">';
-    const script = '<script type="module" src="/_hipst/app.mjs"></script>';
-    const hmr = this.hmrEnabled
-      ? '<script>try{const es=new EventSource("/_hipst/hmr");es.onmessage=(e)=>{if(e.data==="reload"){location.reload();}}}catch{}</script>'
-      : '';
-    // head injection
-    html = html.replace(/<head(\s*[^>]*)>/i, (m) => m + link);
-    if (emptyBody) {
-      // Replace body content entirely with empty mount container + script
-      html = html.replace(/<body(\s*[^>]*)>.*?<\/body>/is, (m, g1) => `<body${g1}><div id="__hipst_app__"></div>${script}${hmr}</body>`);
-    } else {
-      // body wrap existing SSR content
-      html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
-      html = html.replace(/<\/body>/i, '</div>' + script + hmr + '</body>');
-    }
-    return html;
+    return injectHtmlAssets(html, {
+      hmr: { enabled: this.hmrEnabled, eventPath: "/_hipst/hmr" },
+      csr: this.csrEnabled ? {
+        scriptSrc: "/_hipst/app.mjs",
+        cssHref: "/_hipst/app.css",
+        csrOnly: emptyBody,
+      } : undefined,
+    });
   }
 
   /**
@@ -511,7 +502,17 @@ if (el && Root) mount(Root, el);
             if (ok) {
               const bases = ["public", "assets", "dist"];
               for (const base of bases) {
-                const full = pathResolve(process.cwd(), base, "." + p);
+                // If request path already starts with the base segment, strip it to avoid duplication
+                let rel: string;
+                const basePrefix = "/" + base + "/";
+                if (p.startsWith(basePrefix)) {
+                  // remove '/<base>/' prefix; ensure relative path (no leading '/')
+                  rel = p.slice(basePrefix.length);
+                } else {
+                  // drop leading '/'
+                  rel = p.startsWith("/") ? p.slice(1) : p;
+                }
+                const full = pathResolve(process.cwd(), base, rel);
                 const safeBase = pathResolve(process.cwd(), base);
                 if (!full.startsWith(safeBase)) continue;
                 const file = Bun.file(full);
@@ -544,6 +545,12 @@ if (el && Root) mount(Root, el);
       },
     } as any);
     cb?.(this._server);
+  }
+
+  /** Stop the underlying Bun server (used by CLI watch restarts). */
+  close(): void {
+    try { (this._server as any)?.stop?.(); } catch {}
+    this._server = undefined;
   }
 }
 
