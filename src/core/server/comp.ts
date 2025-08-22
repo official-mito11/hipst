@@ -14,6 +14,11 @@ export class Server<L extends object = {}> extends Component {
   private uiRoot?: HtmlRoot | UIComponent;
   private statics: Array<{ mount: string; dir: string }> = [];
   private middlewares: Array<Middleware<any, any>> = [];
+  // HMR
+  private hmrEnabled = false;
+  private hmrClients: Set<(data: string) => void> = new Set();
+  // Docs override (CLI can inject compile-time docs)
+  private docsOverride?: any;
   // CSR configuration & in-memory built assets
   private csrEnabled = false;
   private csrEntry?: string;
@@ -28,6 +33,8 @@ export class Server<L extends object = {}> extends Component {
     entryMap?: string; // map for entry (when auto)
     runtimeMap?: string; // map for runtime (when auto)
   };
+  // Optional: serve CSR assets from a prebuilt directory (used by integrated build)
+  private csrServeDir?: string;
 
   constructor() {
     super();
@@ -41,10 +48,35 @@ export class Server<L extends object = {}> extends Component {
     return this;
   }
 
+  /** Clear registered routes (UI root and APIs). Useful for HMR reloads. */
+  resetRoutes(): this {
+    this.apis = [];
+    this.uiRoot = undefined;
+    return this;
+  }
+
+  /** Invalidate in-memory CSR build so it will rebuild on next request. */
+  invalidateClientBuild(): this {
+    this.csrBuilt = undefined;
+    return this;
+  }
+
   use<Add extends object>(mw: Middleware<L, Add>): Server<L & Add> {
     this.middlewares.push(mw as any);
     return this as unknown as Server<L & Add>;
   }
+
+  /** Enable SSE-based live-reload for dev. */
+  enableHMR(): this { this.hmrEnabled = true; return this; }
+  /** Broadcast a reload event to connected HMR clients. */
+  hmrBroadcast(): void {
+    if (!this.hmrEnabled) return;
+    for (const send of this.hmrClients) {
+      try { send("reload"); } catch {}
+    }
+  }
+  /** Allow CLI to override docs payload (e.g., compiled type schemas). */
+  setDocs(doc: any): this { this.docsOverride = doc; return this; }
 
   /**
    * Enable client-side runtime (CSR). When enabled, Server will:
@@ -75,6 +107,13 @@ export class Server<L extends object = {}> extends Component {
   csrOnly(): this {
     this.csrEnabled = true;
     this.csrOnlyMode = true;
+    return this;
+  }
+
+  /** Use CSR assets from a prebuilt directory. Files expected: app.mjs, app.entry.mjs, runtime.mjs, app.css, and optional .map files. */
+  csrServeFromDir(dir: string): this {
+    this.csrEnabled = true;
+    this.csrServeDir = dir;
     return this;
   }
 
@@ -250,15 +289,18 @@ if (el && Root) mount(Root, el);
     // Inject link/script and wrap body content in a mount container
     const link = '<link rel="stylesheet" href="/_hipst/app.css">';
     const script = '<script type="module" src="/_hipst/app.mjs"></script>';
+    const hmr = this.hmrEnabled
+      ? '<script>try{const es=new EventSource("/_hipst/hmr");es.onmessage=(e)=>{if(e.data==="reload"){location.reload();}}}catch{}</script>'
+      : '';
     // head injection
     html = html.replace(/<head(\s*[^>]*)>/i, (m) => m + link);
     if (emptyBody) {
       // Replace body content entirely with empty mount container + script
-      html = html.replace(/<body(\s*[^>]*)>.*?<\/body>/is, (m, g1) => `<body${g1}><div id="__hipst_app__"></div>${script}</body>`);
+      html = html.replace(/<body(\s*[^>]*)>.*?<\/body>/is, (m, g1) => `<body${g1}><div id="__hipst_app__"></div>${script}${hmr}</body>`);
     } else {
       // body wrap existing SSR content
       html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
-      html = html.replace(/<\/body>/i, '</div>' + script + '</body>');
+      html = html.replace(/<\/body>/i, '</div>' + script + hmr + '</body>');
     }
     return html;
   }
@@ -320,47 +362,123 @@ if (el && Root) mount(Root, el);
         };
         const pre = await runServer(0);
         if (pre !== undefined) return toResponse(pre as any);
+        // Serve internal docs JSON
+        if (url.pathname === "/_hipst/docs.json") {
+          const doc = this.docsOverride ?? { apis: this.apis.map((a) => a.describeDeep()) };
+          return new Response(JSON.stringify(doc, null, 2), {
+            status: 200,
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+          });
+        }
+
+        // SSE HMR endpoint
+        if (this.hmrEnabled && url.pathname === "/_hipst/hmr") {
+          const encoder = new TextEncoder();
+          let sendRef: ((data: string) => void) | undefined;
+          const stream = new ReadableStream<Uint8Array>({
+            start: (controller) => {
+              const send = (data: string) => controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+              sendRef = send;
+              this.hmrClients.add(send);
+              send("ready");
+            },
+            cancel: () => {
+              if (sendRef) this.hmrClients.delete(sendRef);
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache, no-transform",
+              "Connection": "keep-alive",
+              "Access-Control-Allow-Origin": "*",
+            },
+          });
+        }
+
         // Serve internal CSR assets
         if (this.csrEnabled) {
+          const serveFromDisk = async (rel: string, type: string) => {
+            if (!this.csrServeDir) return undefined;
+            const full = pathResolve(this.csrServeDir, rel);
+            const file = Bun.file(full);
+            if (await file.exists()) {
+              return new Response(file, { status: 200, headers: { "Content-Type": type } });
+            }
+            return new Response("Not Found", { status: 404 });
+          };
+
           if (url.pathname === "/_hipst/app.mjs" || url.pathname === "/_hipst/app.js") {
-            await this.ensureClientBuilt();
-            const body = this.csrBuilt?.js ?? "";
-            return new Response(body, {
-              status: 200,
-              headers: { "Content-Type": "application/javascript; charset=utf-8" },
-            });
+            if (this.csrServeDir) {
+              const r = await serveFromDisk("app.mjs", "application/javascript; charset=utf-8");
+              if (r) return r;
+            } else {
+              await this.ensureClientBuilt();
+              const body = this.csrBuilt?.js ?? "";
+              return new Response(body, { status: 200, headers: { "Content-Type": "application/javascript; charset=utf-8" } });
+            }
           }
           if (url.pathname === "/_hipst/app.entry.mjs") {
-            await this.ensureClientBuilt();
-            const body = this.csrBuilt?.entry ?? "";
-            return new Response(body, {
-              status: 200,
-              headers: { "Content-Type": "application/javascript; charset=utf-8" },
-            });
+            if (this.csrServeDir) {
+              const r = await serveFromDisk("app.entry.mjs", "application/javascript; charset=utf-8");
+              if (r) return r;
+            } else {
+              await this.ensureClientBuilt();
+              const body = this.csrBuilt?.entry ?? "";
+              return new Response(body, { status: 200, headers: { "Content-Type": "application/javascript; charset=utf-8" } });
+            }
           }
           if (url.pathname === "/_hipst/runtime.mjs") {
-            await this.ensureClientBuilt();
-            const body = this.csrBuilt?.runtime ?? "";
-            return new Response(body, {
-              status: 200,
-              headers: { "Content-Type": "application/javascript; charset=utf-8" },
-            });
+            if (this.csrServeDir) {
+              const r = await serveFromDisk("runtime.mjs", "application/javascript; charset=utf-8");
+              if (r) return r;
+            } else {
+              await this.ensureClientBuilt();
+              const body = this.csrBuilt?.runtime ?? "";
+              return new Response(body, { status: 200, headers: { "Content-Type": "application/javascript; charset=utf-8" } });
+            }
           }
           if (url.pathname === "/_hipst/app.css") {
-            await this.ensureClientBuilt();
-            const body = this.csrBuilt?.css ?? "";
-            return new Response(body, {
-              status: 200,
-              headers: { "Content-Type": "text/css; charset=utf-8" },
-            });
+            if (this.csrServeDir) {
+              const r = await serveFromDisk("app.css", "text/css; charset=utf-8");
+              if (r) return r;
+            } else {
+              await this.ensureClientBuilt();
+              const body = this.csrBuilt?.css ?? "";
+              return new Response(body, { status: 200, headers: { "Content-Type": "text/css; charset=utf-8" } });
+            }
           }
           if (url.pathname === "/_hipst/app.mjs.map" || url.pathname === "/_hipst/app.js.map") {
-            await this.ensureClientBuilt();
-            const body = this.csrBuilt?.map ?? "";
-            return new Response(body, {
-              status: 200,
-              headers: { "Content-Type": "application/json; charset=utf-8" },
-            });
+            if (this.csrServeDir) {
+              const r = await serveFromDisk("app.mjs.map", "application/json; charset=utf-8");
+              if (r) return r;
+            } else {
+              await this.ensureClientBuilt();
+              const body = this.csrBuilt?.map ?? "";
+              return new Response(body, { status: 200, headers: { "Content-Type": "application/json; charset=utf-8" } });
+            }
+          }
+          // Optional maps for auto mode
+          if (url.pathname === "/_hipst/app.entry.mjs.map") {
+            if (this.csrServeDir) {
+              const r = await serveFromDisk("app.entry.mjs.map", "application/json; charset=utf-8");
+              if (r) return r;
+            } else {
+              await this.ensureClientBuilt();
+              const body = this.csrBuilt?.entryMap ?? "";
+              return new Response(body, { status: 200, headers: { "Content-Type": "application/json; charset=utf-8" } });
+            }
+          }
+          if (url.pathname === "/_hipst/runtime.mjs.map") {
+            if (this.csrServeDir) {
+              const r = await serveFromDisk("runtime.mjs.map", "application/json; charset=utf-8");
+              if (r) return r;
+            } else {
+              await this.ensureClientBuilt();
+              const body = this.csrBuilt?.runtimeMap ?? "";
+              return new Response(body, { status: 200, headers: { "Content-Type": "application/json; charset=utf-8" } });
+            }
           }
         }
         // Static files

@@ -11,7 +11,6 @@ const TestComponent = component(ui('div')
 .state("test", "1rem")
 )
 
-TestComponent.newt("24px").r(({state})=> state.test)( ({self}) => self.state.test )
 
 // Demo: Checkbox component using .define() to accept a boolean at call-time via ctx.children
 const Checkbox = component(ui('input').type('checkbox')
@@ -44,7 +43,7 @@ export const App = html()
     .p(10)
     .onClick(async ({ parent, state }) => {
       state.selfstate = state.selfstate + 1;
-      const data = await myApi.client.get({ query: { q: "gay" } });
+      const data = await myApi.client.get({query:{q:"gay"}});
       if (parent) parent.state.api = String(data ?? "");
     })
     ("Fetch API"),

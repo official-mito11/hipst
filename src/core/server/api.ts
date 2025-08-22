@@ -63,6 +63,13 @@ export type MethodSpec = {
   DELETE?: DeleteSpec<any, any, any>;
 };
 
+export type ApiDocNode = {
+  path: string;
+  methods: HttpMethod[];
+  meta?: Record<string, any>;
+  children: ApiDocNode[];
+};
+
 export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> = {}> extends Component {
   public readonly basePath: string;
   private handlers: Partial<Record<HttpMethod, Handler<L>>> = {};
@@ -74,6 +81,7 @@ export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> =
   private _fullPatternCache?: string;
   private _compiledCache?: ReturnType<typeof compilePath>;
   private _mwChainCache?: Array<Middleware<any, any>>;
+  private _docMeta?: Record<string, any>;
 
   constructor(basePath: string) {
     super();
@@ -108,31 +116,80 @@ export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> =
     return this as unknown as ApiComponent<L & Add, M>;
   }
 
+  /**
+   * Attach free-form documentation metadata to this API node. Intended for docs generation.
+   */
+  doc(meta: Record<string, any>): this {
+    this._docMeta = { ...(this._docMeta || {}), ...(meta || {}) };
+    return this;
+  }
+
   on(method: HttpMethod, handler: Handler<L>): this {
     this.handlers[method] = handler as any;
     return this;
   }
 
   // Typed HTTP methods capturing request/response types
-  get<R = unknown, Q = unknown, Pm = unknown>(
+  // Overload A: explicit Spec generic
+  get<S extends GetSpec<any, any, any>>(
+    handler: (ctx: ApiContext<L> & { query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+  ): ApiComponent<L, M & { GET: S }>;
+  // Overload B: infer or explicit with param order <Q, Pm, R>
+  get<Q = unknown, Pm = unknown, R = unknown>(
     handler: (ctx: ApiContext<L> & { query: Q; param: Pm }) => FinalishOf<R>
-  ): ApiComponent<L, M & { GET: GetSpec<Q, Pm, R> }> { return this.on("GET", handler as any) as any; }
+  ): ApiComponent<L, M & { GET: GetSpec<Q, Pm, R> }>;
+  get(handler: any): any { return this.on("GET", handler as any) as any; }
 
-  post<B = unknown, R = unknown, Q = unknown, Pm = unknown>(
+  // Overload A: explicit Spec generic
+  post<S extends PostSpec<any, any, any, any>>(
+    handler: (ctx: ApiContext<L> & { body: S["body"]; query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+  ): ApiComponent<L, M & { POST: S }>;
+  // Overload B: infer or explicit with param order <Q, Pm, B, R>
+  post<Q = unknown, Pm = unknown, B = unknown, R = unknown>(
     handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
-  ): ApiComponent<L, M & { POST: PostSpec<Q, Pm, B, R> }> { return this.on("POST", handler as any) as any; }
+  ): ApiComponent<L, M & { POST: PostSpec<Q, Pm, B, R> }>;
+  post(handler: any): any { return this.on("POST", handler as any) as any; }
 
-  put<B = unknown, R = unknown, Q = unknown, Pm = unknown>(
+  // Overload A: explicit Spec generic
+  put<S extends PutSpec<any, any, any, any>>(
+    handler: (ctx: ApiContext<L> & { body: S["body"]; query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+  ): ApiComponent<L, M & { PUT: S }>;
+  // Overload B: infer or explicit with param order <Q, Pm, B, R>
+  put<Q = unknown, Pm = unknown, B = unknown, R = unknown>(
     handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
-  ): ApiComponent<L, M & { PUT: PutSpec<Q, Pm, B, R> }> { return this.on("PUT", handler as any) as any; }
+  ): ApiComponent<L, M & { PUT: PutSpec<Q, Pm, B, R> }>;
+  put(handler: any): any { return this.on("PUT", handler as any) as any; }
 
-  patch<B = unknown, R = unknown, Q = unknown, Pm = unknown>(
+  // Overload A: explicit Spec generic
+  patch<S extends PatchSpec<any, any, any, any>>(
+    handler: (ctx: ApiContext<L> & { body: S["body"]; query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+  ): ApiComponent<L, M & { PATCH: S }>;
+  // Overload B: infer or explicit with param order <Q, Pm, B, R>
+  patch<Q = unknown, Pm = unknown, B = unknown, R = unknown>(
     handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
-  ): ApiComponent<L, M & { PATCH: PatchSpec<Q, Pm, B, R> }> { return this.on("PATCH", handler as any) as any; }
+  ): ApiComponent<L, M & { PATCH: PatchSpec<Q, Pm, B, R> }>;
+  patch(handler: any): any { return this.on("PATCH", handler as any) as any; }
 
-  delete<R = unknown, Q = unknown, Pm = unknown>(
+  // Overload A: explicit Spec generic
+  delete<S extends DeleteSpec<any, any, any>>(
+    handler: (ctx: ApiContext<L> & { query: S["query"]; param: S["params"] }) => FinalishOf<S["res"]>
+  ): ApiComponent<L, M & { DELETE: S }>;
+  // Overload B: infer or explicit with param order <Q, Pm, R>
+  delete<Q = unknown, Pm = unknown, R = unknown>(
     handler: (ctx: ApiContext<L> & { query: Q; param: Pm }) => FinalishOf<R>
-  ): ApiComponent<L, M & { DELETE: DeleteSpec<Q, Pm, R> }> { return this.on("DELETE", handler as any) as any; }
+  ): ApiComponent<L, M & { DELETE: DeleteSpec<Q, Pm, R> }>;
+  delete(handler: any): any { return this.on("DELETE", handler as any) as any; }
+
+  /** Return a documentation tree for this ApiComponent and its children. */
+  describeDeep(): ApiDocNode {
+    const methods: HttpMethod[] = Object.keys(this.handlers) as HttpMethod[];
+    return {
+      path: this.fullPattern(),
+      methods,
+      meta: this._docMeta ? { ...this._docMeta } : undefined,
+      children: this.children.map((c) => c.describeDeep()),
+    };
+  }
 
   public fullPattern(): string {
     if (this._fullPatternCache) return this._fullPatternCache;
