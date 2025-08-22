@@ -53,39 +53,39 @@ hipst build examples/counter.app.ts --out dist/counter-fe
 hipst build examples/counter.app.ts --client --out dist/counter-fe-client
 ```
 
-## Tiny example
+## Usage
 
-Create `app.ts`:
-
-```ts
-import { html, ui } from "hipst";
-
-export const App = html()
-  .title("Hello Hipst")
-  .meta("description", "Minimal example")
-  (
-    ui("div").p(24)(
-      ui("h1")("Hello Hipst"),
-      ui("button")
-        .state("count", 0)
-        .onClick(({ self }) => { self.state.count++; })
-        (({ self }) => `Clicked ${self.state.count} times`)
-    )
-  );
-```
-
-Optional `api.ts`:
+Create `main.ts`:
 
 ```ts
-import { api } from "hipst";
+import { server, api, html, ui } from "hipst";
 
-export const hello = api("/hello").get(({ res }) => res({ ok: true }));
+const App = html()
+.title("Hello Hipst")
+.meta("description", "Minimal example")
+(
+  ui("div").padding(24)(
+    ui("h1")("Hello Hipst"),
+    ui("button")
+      .state("count", 0)
+      .onClick(({ state }) => { state.count++; })
+      (({ state }) => `Clicked ${state.count} times`)
+  )
+);
+
+const Api = api("/")
+.get(({ res }) => res("Hello Hipst"))
+
+server()
+.route(Api)
+.route(App)
+.listen(3000, () => console.log("server is running on *:3000"))
 ```
 
 Serve locally:
 
 ```bash
-hipst serve app.ts --port 3000
+hipst serve app.ts
 ```
 
 Build static assets (SSR HTML + CSR assets):
@@ -95,8 +95,6 @@ hipst build app.ts --out dist/app
 ```
 
 ---
-
-Tip: You can still use legacy flags like `--ui`/`--api` and `--app` — but positional `hipst serve <AppFile[#Export]>` and `hipst build <AppFile[#Export]>` are preferred.
 
 ## More
 - Explore: https://deepwiki.com/official-mito11/hipst
