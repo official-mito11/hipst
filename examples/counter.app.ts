@@ -14,8 +14,8 @@ const TestComponent = component(ui('div')
 TestComponent.newt("24px").r(({state})=> state.test)( ({self}) => self.state.test )
 
 // Demo: Checkbox component using .define() to accept a boolean at call-time via ctx.children
-const Checkbox = ui('input').type('checkbox')
-  .define(({ self, children }) => self.attr('checked', !!children[0]));
+const Checkbox = component(ui('input').type('checkbox')
+  .define(({ self, children }) => self.attr('checked', !!children[0])));
 
 export const App = html()
 .title("Counter")

@@ -1,6 +1,6 @@
 import { HttpMethod } from "../http/types";
 import { applyParams } from "./path";
-import type { ApiComponent } from "./api";
+import type { ApiComponent, MethodSpec } from "./api";
 
 export interface ApiClientRequestArgs {
   params?: Record<string, string | number>;
@@ -11,15 +11,59 @@ export interface ApiClientRequestArgs {
   headers?: HeadersInit;
 }
 
-export interface ApiClient {
-  get(args?: Omit<ApiClientRequestArgs, "body">): Promise<any>;
-  delete(args?: Omit<ApiClientRequestArgs, "body">): Promise<any>;
-  post(args?: ApiClientRequestArgs): Promise<any>;
-  put(args?: ApiClientRequestArgs): Promise<any>;
-  patch(args?: ApiClientRequestArgs): Promise<any>;
-}
+type InferGetArgs<S> = Omit<ApiClientRequestArgs, "body" | "params" | "query"> & {
+  params?: S extends { params: infer P } ? P : Record<string, any>;
+  query?: S extends { query: infer Q } ? Q : Record<string, any>;
+};
 
-export function createClientFacade(node: ApiComponent<any>): ApiClient {
+type InferPostArgs<S> = Omit<ApiClientRequestArgs, "params" | "query" | "body"> & {
+  params?: S extends { params: infer P } ? P : Record<string, any>;
+  query?: S extends { query: infer Q } ? Q : Record<string, any>;
+  body?: S extends { body: infer B } ? B : unknown;
+};
+
+type InferPutArgs<S> = Omit<ApiClientRequestArgs, "params" | "query" | "body"> & {
+  params?: S extends { params: infer P } ? P : Record<string, any>;
+  query?: S extends { query: infer Q } ? Q : Record<string, any>;
+  body?: S extends { body: infer B } ? B : unknown;
+};
+
+type InferPatchArgs<S> = Omit<ApiClientRequestArgs, "params" | "query" | "body"> & {
+  params?: S extends { params: infer P } ? P : Record<string, any>;
+  query?: S extends { query: infer Q } ? Q : Record<string, any>;
+  body?: S extends { body: infer B } ? B : unknown;
+};
+
+type InferDeleteArgs<S> = Omit<ApiClientRequestArgs, "body" | "params" | "query"> & {
+  params?: S extends { params: infer P } ? P : Record<string, any>;
+  query?: S extends { query: infer Q } ? Q : Record<string, any>;
+};
+
+type MethodsOf<N> = N extends ApiComponent<any, infer M> ? M : Partial<MethodSpec>;
+
+export type ApiClientOf<N extends ApiComponent<any, any>> = MethodsOf<N> extends infer M
+  ? (M extends { GET: infer G }
+      ? { get: (args?: InferGetArgs<G>) => Promise<G extends { res: infer R } ? R : unknown> }
+      : {})
+    &
+    (M extends { POST: infer H }
+      ? { post: (args?: InferPostArgs<H>) => Promise<H extends { res: infer R } ? R : unknown> }
+      : {})
+    &
+    (M extends { PUT: infer U }
+      ? { put: (args?: InferPutArgs<U>) => Promise<U extends { res: infer R } ? R : unknown> }
+      : {})
+    &
+    (M extends { PATCH: infer P }
+      ? { patch: (args?: InferPatchArgs<P>) => Promise<P extends { res: infer R } ? R : unknown> }
+      : {})
+    &
+    (M extends { DELETE: infer D }
+      ? { delete: (args?: InferDeleteArgs<D>) => Promise<D extends { res: infer R } ? R : unknown> }
+      : {})
+  : never;
+
+export function createClientFacade<N extends ApiComponent<any, any>>(node: N): ApiClientOf<N> {
   const getPattern = () => node.fullPattern();
 
   const buildUrl = (method: HttpMethod, args?: ApiClientRequestArgs): string => {
@@ -71,11 +115,12 @@ export function createClientFacade(node: ApiComponent<any>): ApiClient {
     return parseBody(res);
   };
 
-  return {
+  const out: any = {
     get: (args?: Omit<ApiClientRequestArgs, "body">) => call("GET", args as any),
-    delete: (args?: Omit<ApiClientRequestArgs, "body">) => call("DELETE", args as any),
     post: (args?: ApiClientRequestArgs) => call("POST", args),
     put: (args?: ApiClientRequestArgs) => call("PUT", args),
     patch: (args?: ApiClientRequestArgs) => call("PATCH", args),
+    delete: (args?: Omit<ApiClientRequestArgs, "body">) => call("DELETE", args as any),
   };
+  return out as ApiClientOf<N>;
 }

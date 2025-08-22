@@ -14,7 +14,7 @@ export type ApiContext<L extends object = {}> = {
   param: Record<string, string>;
   header: (key: string | Record<string, string>, value?: string) => ResponseBuilder;
   status: (code: number) => ResponseBuilder;
-  res: (body: any) => FinalResult;
+  res: <T>(body: T) => FinalResultOf<T>;
   body: any;
   headers: Headers;
 } & L;
@@ -27,11 +27,40 @@ export type Handler<L extends object = {}> = (ctx: ApiContext<L>) => Promise<Fin
 export type FinalishOf<T> = Promise<FinalResultOf<T> | T> | FinalResultOf<T> | T;
 
 // Method type specs captured at the type level (phantom only)
-export type GetSpec<Q = unknown, P = unknown, R = unknown> = { query: Q; params: P; res: R };
-export type PostSpec<Q = unknown, P = unknown, B = unknown, R = unknown> = { query: Q; params: P; body: B; res: R };
+export type GetSpec<
+  Q = Record<string, any>,
+  P = Record<string, string | number>,
+  R = unknown
+> = { query: Q; params: P; res: R };
+export type PostSpec<
+  Q = Record<string, any>,
+  P = Record<string, string | number>,
+  B = any,
+  R = unknown
+> = { query: Q; params: P; body: B; res: R };
+export type PutSpec<
+  Q = Record<string, any>,
+  P = Record<string, string | number>,
+  B = any,
+  R = unknown
+> = { query: Q; params: P; body: B; res: R };
+export type PatchSpec<
+  Q = Record<string, any>,
+  P = Record<string, string | number>,
+  B = any,
+  R = unknown
+> = { query: Q; params: P; body: B; res: R };
+export type DeleteSpec<
+  Q = Record<string, any>,
+  P = Record<string, string | number>,
+  R = unknown
+> = { query: Q; params: P; res: R };
 export type MethodSpec = {
   GET?: GetSpec<any, any, any>;
   POST?: PostSpec<any, any, any, any>;
+  PUT?: PutSpec<any, any, any, any>;
+  PATCH?: PatchSpec<any, any, any, any>;
+  DELETE?: DeleteSpec<any, any, any>;
 };
 
 export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> = {}> extends Component {
@@ -93,10 +122,17 @@ export class ApiComponent<L extends object = {}, M extends Partial<MethodSpec> =
     handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
   ): ApiComponent<L, M & { POST: PostSpec<Q, Pm, B, R> }> { return this.on("POST", handler as any) as any; }
 
-  // The following are still available for server use but not part of client typing
-  put(handler: Handler<L>): this { return this.on("PUT", handler); }
-  patch(handler: Handler<L>): this { return this.on("PATCH", handler); }
-  delete(handler: Handler<L>): this { return this.on("DELETE", handler); }
+  put<B = unknown, R = unknown, Q = unknown, Pm = unknown>(
+    handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
+  ): ApiComponent<L, M & { PUT: PutSpec<Q, Pm, B, R> }> { return this.on("PUT", handler as any) as any; }
+
+  patch<B = unknown, R = unknown, Q = unknown, Pm = unknown>(
+    handler: (ctx: ApiContext<L> & { body: B; query: Q; param: Pm }) => FinalishOf<R>
+  ): ApiComponent<L, M & { PATCH: PatchSpec<Q, Pm, B, R> }> { return this.on("PATCH", handler as any) as any; }
+
+  delete<R = unknown, Q = unknown, Pm = unknown>(
+    handler: (ctx: ApiContext<L> & { query: Q; param: Pm }) => FinalishOf<R>
+  ): ApiComponent<L, M & { DELETE: DeleteSpec<Q, Pm, R> }> { return this.on("DELETE", handler as any) as any; }
 
   public fullPattern(): string {
     if (this._fullPatternCache) return this._fullPatternCache;

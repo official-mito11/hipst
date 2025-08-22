@@ -11,13 +11,18 @@ type CSSProperties = CSSProps<string | number>;
 
 // A callable component where children value functions receive the full UIContext.
 // The parent in the context is refined to the provided generic `P` for better type inference via parentTyped().
-export type WithCallable<C extends UIComponent<any, any, any>, P = UIComponent<any, any, any>> = C & ((
-  ...children: Array<
-    | string
-    | UIComponent<any, any, any>
-    | ValueOrFn<string, UIContext<C, StateOf<C>, PropsOf<C>> & { parent?: P }>
-  >
-) => C);
+export type WithCallable<C extends UIComponent<any, any, any>, P = UIComponent<any, any, any>> = C & {
+  (
+    ...children: Array<
+      | string
+      | UIComponent<any, any, any>
+      | ValueOrFn<string, UIContext<C, StateOf<C>, PropsOf<C>> & { parent?: P }>
+    >
+  ): C;
+  // Fallback overload to support define() call-time arguments that are not strictly children
+  // Example: const Checkbox = ui('input').define(...); Checkbox(true)
+  (...args: any[]): C;
+};
 
 type StateProps<S extends object> = { [K in keyof S]: S[K] };
 type WithState<C extends UIComponent<any, any, any>, NS extends object> = C extends UIComponent<infer TG, any, infer PP>

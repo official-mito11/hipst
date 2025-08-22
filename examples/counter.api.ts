@@ -27,8 +27,12 @@ const testApi = api("/test")
 export const myApi = api("/auth/me")
   .use(jwtAuth)
   .route(testApi)
-  .get(({ user, res }) => res(`your name is ${user.name}`))
+  .get(({ user, res }) => res({msg:`your name is ${user.name}`}))
   .post(({body, res}) => {
+    const { data } = body;
+    return res({ data })
+  })
+  .put(({body, res}) => {
     const { data } = body;
     return res({ data })
   });

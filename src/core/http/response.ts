@@ -49,7 +49,7 @@ export function createResponseKit(initStatus = 200, initHeaders: Record<string, 
   return {
     statusFn: (c: number) => builder.status(c),
     headerFn: (k: any, v?: any) => builder.header(k, v),
-    resFn: (b: any) => builder.res(b),
+    resFn: ((b: any) => builder.res(b)) as <T>(b: T) => FinalResultOf<T>,
   };
 }
 

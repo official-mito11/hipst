@@ -1,4 +1,4 @@
-import type { ResponseBuilder, Finalish, FinalResult } from "../http/response";
+import type { ResponseBuilder, Finalish, FinalResult, FinalResultOf } from "../http/response";
 
 export type MiddlewareContext<L extends object = {}> = {
   req: Request;
@@ -7,7 +7,7 @@ export type MiddlewareContext<L extends object = {}> = {
   param: Record<string, string>;
   header: (key: string | Record<string, string>, value?: string) => ResponseBuilder;
   status: (code: number) => ResponseBuilder;
-  res: (body: any) => FinalResult;
+  res: <T>(body: T) => FinalResultOf<T>;
   body: any;
   headers: Headers;
 } & L;
