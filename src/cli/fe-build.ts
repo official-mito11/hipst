@@ -115,7 +115,7 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
 
   let html = renderToString(root);
 
-  const outDir = resolve(process.cwd(), String(args.out || "dist/fe"));
+  const outDir = resolve(process.cwd(), String(args.out || "dist/app"));
   mkdirSync(outDir, { recursive: true });
 
   // Build path selection: always auto mode, minified

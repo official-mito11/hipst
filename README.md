@@ -32,7 +32,7 @@
 ## Why hipst?
 - Minimal, Bun‑native. Zero config, instant startup.
 - One DSL for everything. Compose UI and API as components.
-- SSR by default, CSR auto‑mounted. Opt‑in CSR‑only when needed.
+- SSR by default, CSR auto‑mounted. CSR‑only mode removed.
 - Type‑safe styles (csstype) and stateful, reactive UI primitives.
 - Tiny client: auto‑generated assets and optional API client helpers.
 
@@ -45,14 +45,11 @@
 # Install deps
 bun install
 
-# Run an example (SSR + CSR assets)
-hipst serve examples/counter.app.ts --port 3000
+# Run an example server (SSR + CSR assets)
+hipst serve examples/counter.ts --port 3000
 
 # Build (SSR HTML + CSR assets): emits index.html + app.mjs (+ app.css) and supporting bundles
 hipst build examples/counter.app.ts --out dist/counter-fe
-
-# Build (CSR-only HTML): emits index.html and supporting bundles
-hipst build examples/counter.app.ts --client --out dist/counter-fe-client
 ```
 
 ## Usage

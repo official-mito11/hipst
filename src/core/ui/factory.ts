@@ -4,6 +4,30 @@ import { UIComponent, type WithCallable } from "./comp";
 import type { UIContext } from "./context";
 import type { ValueOrFn } from "../context";
 
+// Best-effort detection of the caller module path using stack traces.
+// This allows us to record the actual app module that defined a component,
+// so the server can synthesize a correct CSR entry that imports that module.
+function guessCallerModulePath(): string | undefined {
+  try {
+    const err = new Error();
+    const stack = String((err as any).stack || "");
+    const lines = stack.split(/\n+/);
+    for (const line of lines) {
+      // Match file paths like: at <fn> (file:///abs/path.ts:12:34) or at /abs/path.ts:12:34
+      const m = line.match(/(?:at\s+[^()]*\()?((?:file:\/\/)?\/[\S^)]*?):\d+:\d+\)?/);
+      if (!m) continue;
+      let p = m[1] as string;
+      // Skip frames from this factory module
+      if (p.includes("/core/ui/factory.")) continue;
+      if (p.startsWith("file://")) {
+        try { p = new URL(p).pathname; } catch {}
+      }
+      return p;
+    }
+  } catch {}
+  return undefined;
+}
+
 export class HtmlRoot extends UIComponent<"__html_root__"> {
   private _title?: ValueOrFn<string, UIContext<this>>;
   private _metas: Record<string, ValueOrFn<string, UIContext<this>>> = {};
@@ -50,11 +74,14 @@ function flatten<T>(arr: T[]): T[] {
 // Overloads leverage lib.dom.d.ts so tag names are inferred and validated
 export function ui<K extends keyof HTMLElementTagNameMap>(tag: K): WithCallable<UIComponent<K>>;
 export function ui<K extends keyof SVGElementTagNameMap>(tag: K): WithCallable<UIComponent<K>>;
-export function ui<Tag extends string>(tag: Tag): WithCallable<UIComponent<Tag>>;
+export function ui<Tag extends string>(tag: Tag): WithCallable<UIComponent<string>>;
 export function ui(tag: string): WithCallable<UIComponent<string>> {
   const base = new UIComponent<string>(tag as string);
-  // Capture definition module path for auto CSR synthesis on the server
-  try { (base as any).__hipst_module__ = new URL(import.meta.url).pathname; } catch {}
+  // Capture caller module path for auto CSR synthesis on the server
+  try {
+    const mp = guessCallerModulePath();
+    if (mp) (base as any).__hipst_module__ = mp;
+  } catch {}
   const callable = toCallable<UIComponent<string>, any[], UIComponent<string>>(base, (self, ...children: any[]) => {
     const kids = flatten(children);
     (self as UIComponent<any>).append(...kids as any);
@@ -67,8 +94,11 @@ export function ui(tag: string): WithCallable<UIComponent<string>> {
 
 export function html(): WithCallable<HtmlRoot> {
   const base = new HtmlRoot();
-  // Capture definition module path for auto CSR synthesis on the server
-  try { (base as any).__hipst_module__ = new URL(import.meta.url).pathname; } catch {}
+  // Capture caller module path for auto CSR synthesis on the server
+  try {
+    const mp = guessCallerModulePath();
+    if (mp) (base as any).__hipst_module__ = mp;
+  } catch {}
   const callable = toCallable<HtmlRoot, any[], HtmlRoot>(base, (self, ...children: any[]) => {
     const kids = flatten(children);
     (self as UIComponent<any>).append(...kids as any);

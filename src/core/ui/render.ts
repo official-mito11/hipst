@@ -1,4 +1,4 @@
-import { HtmlRoot } from "./factory";
+import type { HtmlRoot } from "./factory";
 import { UIComponent } from "./comp";
 import type { UIContext } from "./context";
 import { resolveValue } from "../context";
@@ -48,6 +48,11 @@ function attrsToString(comp: UIComponent<any, any>, ctx: UIContext<UIComponent<a
   const styleStr = styleToString(comp, ctx);
   if (styleStr) parts.push(`style="${esc(styleStr)}"`);
   return parts.join(" ");
+}
+
+// Cross-module safe HtmlRoot detection: rely on the unique tag name used by HtmlRoot
+function isHtmlRoot(v: unknown): v is HtmlRoot {
+  return !!v && typeof v === "object" && (v as { tag?: unknown }).tag === "__html_root__";
 }
 
 function renderNode(node: UIComponent<any, any>, root: UIComponent<any, any>): string {
@@ -106,7 +111,7 @@ function renderNode(node: UIComponent<any, any>, root: UIComponent<any, any>): s
 
 export function renderToString(root: HtmlRoot | UIComponent<any, any>): string {
   const maybe = unwrap(root) as HtmlRoot | UIComponent<any, any>;
-  if (maybe instanceof HtmlRoot) {
+  if (isHtmlRoot(maybe)) {
     const r = maybe as HtmlRoot;
     let ctx: UIContext<HtmlRoot>;
     const stateFacade: any = new Proxy(function () {}, {
@@ -158,9 +163,10 @@ export function renderToString(root: HtmlRoot | UIComponent<any, any>): string {
       else if (typeof c === "function") body += esc(String((c as any)(ctx)));
       else body += esc(String(c));
     }
-    return `<!doctype html><html><head>${title ? `<title>${esc(title)}</title>` : ""}${metas.join("")}</head><body>${body}</body></html>`;
+    return `<!doctype html><html lang="en"><head>${title ? `<title>${esc(title)}</title>` : ""}${metas.join("")}</head><body>${body}</body></html>`;
+  } else {
+    const top = maybe as UIComponent<any, any>;
+    const realRoot = (maybe as any).root ?? maybe;
+    return renderNode(top, realRoot as UIComponent<any, any>);
   }
-  const top = maybe as UIComponent<any, any>;
-  const realRoot = (maybe as any).root ?? maybe;
-  return renderNode(top, realRoot as UIComponent<any, any>);
 }

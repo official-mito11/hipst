@@ -14,16 +14,8 @@ Usage:
 
   hipst build <AppFilePath> [options]
     --full                Integrated build: FE assets, compile-time docs, server runner
-    --out <dir>           Output dir (default: dist/fe)
+    --out <dir>           Output dir (default: dist/app)
     --sourcemap <mode>    external|inline|none (default: external)
-
-  hipst full-build <AppFilePath> [options]
-    --api <ApiFile>            Optional legacy API module to include
-    --out <dir>                Output dir (default: dist/full)
-    --sourcemap <mode>         external|inline|none (default: external)
-
-  Notes:
-    - Legacy flags are parsed but deprecated: serve --ui/--api ..., build --app ...
   `);
 }
 
@@ -34,12 +26,6 @@ export async function main(argv: string[] = Bun.argv) {
     case "build":
       if (argv.includes("--full")) await runFullBuild(forwarded);
       else await runFeBuild(forwarded);
-      return;
-    case "fe-build":
-      await runFeBuild(forwarded);
-      return;
-    case "full-build":
-      await runFullBuild(forwarded);
       return;
     case "serve":
       await runServe(forwarded);

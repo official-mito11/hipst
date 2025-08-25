@@ -22,7 +22,6 @@ export class Server<L extends object = {}> extends Component {
   private docsOverride?: any;
   // CSR configuration & in-memory built assets
   private csrEnabled = false;
-  private csrEntry?: string;
   private csrAutoSpec?: { modulePath: string; exportName?: string };
   private csrBuilt?: {
     js: string; // wrapper or explicit bundle
@@ -45,13 +44,24 @@ export class Server<L extends object = {}> extends Component {
       this.apis.push(node);
     } else {
       this.uiRoot = node as any;
-      // Auto-enable CSR from the UI module if available
-      try {
-        const modPath = (node as unknown as { __hipst_module__?: string }).__hipst_module__;
-        if (!this.csrEnabled && typeof modPath === "string" && modPath.length > 0) {
-          this.csrAutoFrom(modPath);
+      // Determine CSR entry:
+      // 1) Prefer CLI-provided module via HIPST_CSR_ENTRY
+      // 2) Fallback to any __hipst_module__ hint on the UI root (best-effort)
+      if (!this.csrEnabled && !this.csrAutoSpec) {
+        const envEntry = (process?.env?.HIPST_CSR_ENTRY ?? "").trim();
+        if (envEntry) {
+          this.csrEnabled = true;
+          this.csrAutoSpec = { modulePath: envEntry, exportName: undefined };
+        } else {
+          try {
+            const modPath = (node as unknown as { __hipst_module__?: string }).__hipst_module__;
+            if (typeof modPath === "string" && modPath.length > 0) {
+              this.csrEnabled = true;
+              this.csrAutoSpec = { modulePath: modPath, exportName: undefined };
+            }
+          } catch {}
         }
-      } catch {}
+      }
     }
     return this;
   }
@@ -86,37 +96,21 @@ export class Server<L extends object = {}> extends Component {
   /** Allow CLI to override docs payload (e.g., compiled type schemas). */
   setDocs(doc: any): this { this.docsOverride = doc; return this; }
 
-  /**
-   * Enable client-side runtime (CSR). When enabled, Server will:
-   * - Build a browser bundle from the provided entry (or auto-detect common entries)
-   * - Inject <link rel="stylesheet"> and <script type="module"> tags into SSR HTML
-   * - Serve built assets under /_hipst/app.css and /_hipst/app.mjs
-   *
-   * Example:
-   *   server().csr("examples/counter.client.ts").route(App).listen(3000)
-   */
-  csr(entry?: string): this {
-    this.csrEnabled = true;
-    this.csrEntry = entry;
-    return this;
-  }
-
-  /**
-   * Configure CSR to be auto-generated from the UI module path & export name.
-   * This avoids requiring a separate client entry file.
-   */
-  csrAutoFrom(uiModulePath: string, exportName?: string): this {
-    this.csrEnabled = true;
-    this.csrAutoSpec = { modulePath: uiModulePath, exportName };
-    return this;
-  }
-
   // CSR-only mode removed: SSR body is always preserved and wrapped for hydration.
 
-  /** Use CSR assets from a prebuilt directory. Files expected: app.mjs, app.entry.mjs, runtime.mjs, app.css, and optional .map files. */
+  /** @internal Use CSR assets from a prebuilt directory. Files expected: app.mjs, app.entry.mjs, runtime.mjs, app.css, and optional .map files. */
   csrServeFromDir(dir: string): this {
     this.csrEnabled = true;
     this.csrServeDir = dir;
+    return this;
+  }
+
+  /** Allow CLI or user code to specify the CSR entry module explicitly. */
+  setCsrEntry(modulePath: string, exportName?: string): this {
+    if (modulePath && typeof modulePath === "string") {
+      this.csrEnabled = true;
+      this.csrAutoSpec = { modulePath, exportName };
+    }
     return this;
   }
 
@@ -126,53 +120,9 @@ export class Server<L extends object = {}> extends Component {
     if (!this.csrEnabled) return;
     if (this.csrBuilt) return;
     const cwd = process.cwd();
-    const auto = !this.csrEntry && this.csrAutoSpec;
-
-    if (!auto) {
-      // Explicit entry: build as a single bundle and serve directly
-      const entry = this.csrEntry!;
-      const out = await Bun.build({
-        entrypoints: [entry],
-        target: "browser",
-        format: "esm",
-        minify: true,
-        sourcemap: "external",
-      });
-      if (!out.success) {
-        console.error("hipst: CSR build failed", out);
-        this.csrBuilt = { js: "" };
-        return;
-      }
-      let js: string | undefined;
-      let css: string | undefined;
-      let map: string | undefined;
-      for (const art of out.outputs) {
-        const p = art.path.toLowerCase();
-        const getText = async (): Promise<string> => {
-          const a: any = art as any;
-          if (typeof a.text === "function") return await a.text();
-          if (typeof a.arrayBuffer === "function") {
-            const ab: ArrayBuffer = await a.arrayBuffer();
-            return new TextDecoder().decode(new Uint8Array(ab));
-          }
-          if (typeof a.bytes === "function") {
-            const u8: Uint8Array = await a.bytes();
-            return new TextDecoder().decode(u8);
-          }
-          const t = a.text;
-          if (typeof t === "string") return t;
-          return String(t ?? "");
-        };
-        if (p.endsWith(".js") || p.endsWith(".mjs")) js = await getText();
-        else if (p.endsWith(".css")) css = await getText();
-        else if (p.endsWith(".map")) map = await getText();
-      }
-      this.csrBuilt = { js: js ?? "", css, map };
-      return;
-    }
-
-    // Auto mode: build UI module and runtime separately, concatenate CSS from HtmlRoot, and serve via wrapper
-    const { modulePath: modPath, exportName: ex } = this.csrAutoSpec!;
+    // Auto mode only: build UI module and runtime separately, concatenate CSS from HtmlRoot, and serve via wrapper
+    if (!this.csrAutoSpec) { this.csrBuilt = { js: "" }; return; }
+    const { modulePath: modPath, exportName: ex } = this.csrAutoSpec;
 
     // Build UI module
     const entryOut = await Bun.build({
@@ -272,7 +222,7 @@ export class Server<L extends object = {}> extends Component {
 `// auto wrapper (in-memory)
 import { mount } from "/_hipst/runtime.mjs";
 import * as Mod from "/_hipst/app.entry.mjs";
-const Root = ${ex ? `Mod[${JSON.stringify(ex)}]` : `(Mod as any).default ?? (Mod as any).App`};
+const Root = ${ex ? `Mod[${JSON.stringify(ex)}]` : `Mod.default ?? Mod.App`};
 const el = document.getElementById("__hipst_app__");
 if (el && Root) mount(Root, el);
 `;
@@ -311,8 +261,11 @@ if (el && Root) mount(Root, el);
   }
 
   listen(port: number, cb?: (server: Bun.Server) => void) {
+    const forcedEnv = (process?.env?.HIPST_FORCE_PORT ?? "").trim();
+    const forced = forcedEnv ? Number.parseInt(forcedEnv, 10) : NaN;
+    const finalPort = Number.isFinite(forced) && forced > 0 ? forced : port;
     this._server = Bun.serve({
-      port: port,
+      port: finalPort,
       fetch: async (req: Request) => {
         const url = new URL(req.url);
         const headers = req.headers;

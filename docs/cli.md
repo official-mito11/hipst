@@ -13,6 +13,7 @@ hipst serve <ServerFilePath> [options]
 Notes:
 - Positional `ServerFilePath` is preferred. Legacy `--ui` and `--api` flags are still parsed but deprecated.
 - SSR is always rendered and hydrated with the client runtime; CSR-only mode has been removed.
+- Fallback: if the module does not export a default `Server` instance, `hipst serve` runs the file with Bun (like `bun <file>`). In `--watch` mode, the subprocess is restarted on changes.
 
 - Build (alias: `fe-build`)
 

@@ -1,4 +1,9 @@
-import { HtmlRoot } from "./factory";
+// Cross-bundle safe HtmlRoot detection using its unique tag value
+function isHtmlRoot(v: unknown): v is HtmlRoot {
+  return !!v && typeof v === "object" && (v as { tag?: unknown }).tag === "__html_root__";
+}
+
+import type { HtmlRoot } from "./factory";
 import { UIComponent } from "./comp";
 import type { UIContext, StateCtx, PropsCtx } from "./context";
 import { resolveValue, type ValueOrFn } from "../context";
@@ -193,7 +198,7 @@ export function mount(rootNode: HtmlRoot | UIComponent<string, LooseObj, LooseOb
     container.removeChild(container.firstChild);
   }
   const maybe = unwrap(rootNode) as HtmlRoot | UIComponent<string, LooseObj, LooseObj>;
-  if (maybe instanceof HtmlRoot) {
+  if (isHtmlRoot(maybe)) {
     // Head management (title/meta)
     const r = maybe as HtmlRoot;
     const ctx: UIContext<HtmlRoot> = {

@@ -8,14 +8,14 @@
 
 ## Server-side CSR
 
-- Enable CSR explicitly with `server().csr()` or via auto synthesis `server().csrAutoFrom(<uiModule>, <export?>)`.
+- CSR is auto-enabled when you route a UI root via `server().route(App)`.
 - The server serves runtime assets from internal paths:
   - `/_hipst/app.mjs` (wrapper)
   - `/_hipst/app.entry.mjs` (UI module bundle)
   - `/_hipst/runtime.mjs` (runtime bundle)
   - `/_hipst/app.css` (concatenated from `HtmlRoot.css()`)
   - optional source maps under `/_hipst/*.map`
-- CSR-only mode (`server().csrOnly()` or CLI `serve --csr`) replaces the SSR body with an empty container + script.
+- CSR-only mode has been removed. SSR + hydration is always used.
 
 ## Build-time CSR
 
@@ -24,7 +24,7 @@
   - `app.mjs` wrapper that mounts the app on load
   - `runtime.mjs`, `app.entry.mjs` and their source maps
   - optional `app.css` if `HtmlRoot.css()` declared paths
-- Legacy explicit entry `--csr <entry>` builds a single bundle as `app.mjs` and injects it.
+- Explicit client entries and `--csr` flags were removed; the builder synthesizes the client runtime automatically.
 
 ## Runtime mount
 

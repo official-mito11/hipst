@@ -9,7 +9,7 @@ type FullBuildArgs = {
   app?: string; // legacy --app
   appPos?: string; // positional
   api?: string; // optional legacy api path
-  out?: string; // out dir (default: dist/full)
+  out?: string; // out dir (default: dist/app)
   sourcemap?: SourcemapMode;
 };
 
@@ -59,7 +59,7 @@ export async function runFullBuild(argv: string[] = Bun.argv) {
     apiAbs = resolve(cwd, String(args.api));
   }
 
-  const outRoot = resolve(cwd, String(args.out || "dist/full"));
+  const outRoot = resolve(cwd, String(args.out || "dist/app"));
   const hipstOut = join(outRoot, "_hipst");
   mkdirSync(hipstOut, { recursive: true });
 

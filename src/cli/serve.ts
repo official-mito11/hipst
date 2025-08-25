@@ -4,11 +4,12 @@ import { watch } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 type ServeArgs = {
-  app?: string; // positional path[#export]
+  app?: string; // positional path to server module
   ui?: string; // legacy
   api?: string; // legacy
   watch?: boolean; // -w/--watch
   port?: string; // -p/--port
+  csr?: string; // --csr <path> optional CSR entry override
 };
 
 function parseArgs(argv: string[]): ServeArgs {
@@ -22,6 +23,12 @@ function parseArgs(argv: string[]): ServeArgs {
     if (a === "--port" || a === "-p") {
       const n = argv[i + 1];
       if (n && !n.startsWith("-")) { out.port = n; i++; } else out.port = "";
+      continue;
+    }
+    if (a.startsWith("--csr=")) { out.csr = a.slice("--csr=".length); continue; }
+    if (a === "--csr") {
+      const n = argv[i + 1];
+      if (n && !n.startsWith("-")) { out.csr = n; i++; }
       continue;
     }
     // legacy flags
@@ -42,10 +49,11 @@ export async function runServe(argv: string[] = Bun.argv) {
   const cwd = process.cwd();
   const uiSpec = args.app || args.ui; // prefer positional (legacy --ui kept for compat)
   if (!uiSpec) {
-    console.error("Usage: hipst serve <ServerFilePath> [--port|-p <number>] [--watch|-w]");
+    console.error("Usage: hipst serve <ServerFilePath> [--port|-p <number>] [--watch|-w] [--csr <ClientEntryFilePath>]");
     process.exit(1);
   }
   const abs = resolve(cwd, String(uiSpec));
+  const csrAbs = args.csr ? resolve(cwd, String(args.csr)) : undefined;
   // Helper: import with cache-busting for HMR
   let bust = 0;
   const importFresh = async (p: string) => {
@@ -54,20 +62,64 @@ export async function runServe(argv: string[] = Bun.argv) {
     return await import(href);
   };
 
-  const mod = await importFresh(abs);
-  const exported = mod.default;
-  if (!exported) {
-    console.error(`Could not find default export in ${abs}`);
-    process.exit(1);
+  // Try to import a default-exported Server instance
+  type MaybeServerModule = { default?: Server };
+  let sCandidate: Server | undefined;
+  try {
+    const mod = (await importFresh(abs)) as MaybeServerModule;
+    const exported = mod.default;
+    if (exported instanceof Server) sCandidate = exported;
+  } catch {}
+
+  // Fallback: if no Server default export, run the file with Bun (bun-like behavior)
+  if (!sCandidate) {
+    const runner = Bun.argv[0] || "bun";
+    console.log(`hipst serve (fallback): ${runner} ${abs}`);
+    let child = Bun.spawn({
+      cmd: [runner, abs],
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+      env: {
+        ...process.env,
+        ...(args.port ? { PORT: String(port), HIPST_FORCE_PORT: String(port) } : {}),
+        ...(csrAbs ? { HIPST_CSR_ENTRY: csrAbs } : {}),
+      },
+    });
+    if (args.watch) {
+      const restart = () => {
+        try { child.kill(); } catch {}
+        child = Bun.spawn({
+          cmd: [runner, abs],
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+          env: {
+            ...process.env,
+            ...(args.port ? { PORT: String(port), HIPST_FORCE_PORT: String(port) } : {}),
+            ...(csrAbs ? { HIPST_CSR_ENTRY: csrAbs } : {}),
+          },
+        });
+        console.log(`[watch] restarted fallback process`);
+      };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const scheduleRestart = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { timer = undefined; restart(); }, 150);
+      };
+      try {
+        watch(abs, { persistent: true }, () => scheduleRestart());
+        console.log("[watch] watching:", abs);
+      } catch (e) {
+        console.warn("[watch] could not watch:", abs, e);
+      }
+    }
+    return;
   }
-  // Accept only a Server instance (server component). FE root is not served here.
-  if (!(exported instanceof Server)) {
-    console.error(`hipst serve expects a Server instance export. Got '${typeof exported}'.`);
-    console.error(`Tip: export default server().route(...); // without .listen()`);
-    process.exit(1);
-  }
-  let s = exported as Server;
+
+  let s: Server = sCandidate;
   if (args.watch) s.enableHMR();
+  if (csrAbs) try { s.setCsrEntry(csrAbs); } catch {}
 
   // Generate and inject docs (compile-time via TS) for app and optional legacy api
   try {
@@ -89,13 +141,14 @@ export async function runServe(argv: string[] = Bun.argv) {
         try { s.close(); } catch {}
         // Re-import module fresh
         const mod = await importFresh(abs);
-        const next = mod.default;
+        const next = (mod as MaybeServerModule).default;
         if (!(next instanceof Server)) {
           console.error(`[watch] export is not a Server instance after reload. Skipping restart.`);
           return;
         }
         s = next as Server;
         s.enableHMR();
+        if (csrAbs) try { s.setCsrEntry(csrAbs); } catch {}
         try {
           const { generateDocs } = await import("./docs-gen");
           s.setDocs(generateDocs([abs]));
@@ -105,8 +158,13 @@ export async function runServe(argv: string[] = Bun.argv) {
         console.error("[watch] restart failed:", e);
       }
     };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleRestart = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = undefined; restart(); }, 150);
+    };
     try {
-      watch(abs, { persistent: true }, (_event) => restart());
+      watch(abs, { persistent: true }, () => scheduleRestart());
       console.log("[watch] watching:", abs);
     } catch (e) {
       console.warn("[watch] could not watch:", abs, e);
