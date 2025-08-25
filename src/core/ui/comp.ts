@@ -74,6 +74,8 @@ export class UIComponent<Tag extends string = string, S extends object = {}, P e
   private _events: Record<string, Array<(ctx: any, ev?: Event) => unknown>> = {};
   private _parent?: UIComponent<any, any>;
   private _root?: UIComponent<any, any>;
+  // Stable brand flag for cross-bundle/component detection (avoids instanceof pitfalls)
+  public readonly __hipst_component__: true = true;
 
   constructor(tag: Tag) {
     super();

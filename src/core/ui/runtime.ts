@@ -10,6 +10,11 @@ import { resolveValue, type ValueOrFn } from "../context";
 import { effect, track, type Eff, stop } from "./reactive";
 import { unwrap } from "../util";
 
+// Cross-bundle safe UIComponent detection via brand flag on instances
+function isComponent(v: unknown): v is UIComponent<any, any, any> {
+  return !!v && typeof v === "object" && (v as any).__hipst_component__ === true;
+}
+
 const ATTR_CACHE = new WeakMap<HTMLElement, Map<string, string | null>>();
 const STYLE_CACHE = new WeakMap<HTMLElement, Map<string, string | number>>();
 const TEXT_CACHE = new WeakMap<Node, string>();
@@ -151,7 +156,7 @@ function mountComponent<T extends string, S extends object, P extends object>(
       }
       for (const child of childStore) {
         const real = unwrap(child);
-        if (real instanceof UIComponent) {
+        if (isComponent(real)) {
           // mountComponent handles appending to container
           mountComponent(real as UIComponent<string, LooseObj, LooseObj>, el, root);
         } else if (typeof child === "function") {
@@ -226,7 +231,7 @@ export function mount(rootNode: HtmlRoot | UIComponent<string, LooseObj, LooseOb
     // Body children
     for (const c of (r.children as unknown as Array<unknown>)) {
       const real = unwrap(c);
-      if (real instanceof UIComponent) mountComponent(real as UIComponent<string, LooseObj, LooseObj>, container, (r as unknown) as UIComponent<string, LooseObj, LooseObj>);
+      if (isComponent(real)) mountComponent(real as UIComponent<string, LooseObj, LooseObj>, container, (r as unknown) as UIComponent<string, LooseObj, LooseObj>);
       else if (typeof c === "function") {
         const text = document.createTextNode("");
         container.appendChild(text);

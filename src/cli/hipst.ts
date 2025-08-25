@@ -11,12 +11,13 @@ Usage:
   hipst serve <ServerFilePath> [options]
     --port, -p <number>   Port
     --watch, -w           Hot reload (HMR)
+    --csr <path>           Optional CSR entry override (auto if omitted)
 
   hipst build <AppFilePath> [options]
     --full                Integrated build: FE assets, compile-time docs, server runner
     --out <dir>           Output dir (default: dist/app)
     --sourcemap <mode>    external|inline|none (default: external)
-  `);
+`);
 }
 
 export async function main(argv: string[] = Bun.argv) {

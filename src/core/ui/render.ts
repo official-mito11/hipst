@@ -4,6 +4,11 @@ import type { UIContext } from "./context";
 import { resolveValue } from "../context";
 import { unwrap } from "../util";
 
+// Cross-bundle safe UIComponent detection via brand flag set on instances
+function isComponent(v: unknown): v is UIComponent<any, any, any> {
+  return !!v && typeof v === "object" && (v as any).__hipst_component__ === true;
+}
+
 function esc(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -92,7 +97,7 @@ function renderNode(node: UIComponent<any, any>, root: UIComponent<any, any>): s
   // Resolve children: unwrap callable components and resolve ValueOrFn with current ctx
   (ctx as any).children = (((node as any)._callArgs) ?? []).map((v: any) => {
     const u = unwrap(v);
-    if (u instanceof UIComponent) return u;
+    if (isComponent(u)) return u;
     return resolveValue(ctx as any, v as any);
   });
 
@@ -101,7 +106,7 @@ function renderNode(node: UIComponent<any, any>, root: UIComponent<any, any>): s
   const children = (node as any).children as any[];
   let inner = "";
   for (const c of children) {
-    if (c instanceof UIComponent) inner += renderNode(c, root);
+    if (isComponent(c)) inner += renderNode(c, root);
     else if (typeof c === "function") inner += esc(String((c as any)(ctx)));
     else inner += esc(String(c));
   }
@@ -144,7 +149,7 @@ export function renderToString(root: HtmlRoot | UIComponent<any, any>): string {
     } as UIContext<HtmlRoot>;
     (ctx as any).children = (((r as any)._callArgs) ?? []).map((v: any) => {
       const u = unwrap(v);
-      if (u instanceof UIComponent) return u;
+      if (isComponent(u)) return u;
       return resolveValue(ctx as any, v as any);
     });
     const title = (r as any).headTitle
@@ -159,7 +164,7 @@ export function renderToString(root: HtmlRoot | UIComponent<any, any>): string {
     let body = "";
     for (const c of bodyChildren) {
       const real = unwrap(c);
-      if (real instanceof UIComponent) body += renderNode(real, r);
+      if (isComponent(real)) body += renderNode(real, r);
       else if (typeof c === "function") body += esc(String((c as any)(ctx)));
       else body += esc(String(c));
     }
