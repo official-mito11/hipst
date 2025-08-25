@@ -3,37 +3,60 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { injectHtmlAssets } from "../core/html/inject";
 
-function parseArgs(argv: string[]) {
-  const out: any = { };
+type SourcemapMode = "external" | "inline" | "none";
+
+interface OutputReadable {
+  text?: (() => Promise<string>) | string;
+  arrayBuffer?: () => Promise<ArrayBuffer>;
+  bytes?: () => Promise<Uint8Array>;
+}
+type BuildArgs = {
+  app?: string; // legacy --app
+  appPos?: string; // positional
+  out?: string;
+  sourcemap?: SourcemapMode;
+};
+
+function isSourcemapMode(v: string): v is SourcemapMode {
+  return v === "external" || v === "inline" || v === "none";
+}
+
+function parseArgs(argv: string[]): BuildArgs {
+  const out: BuildArgs = {};
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--") break;
-    if (!a.startsWith("-")) { out.appPos = a; continue; }
-    const eq = a.indexOf("=");
-    if (a === "--client") { out.client = true; continue; }
-    if (a.startsWith("--")) {
-      if (eq > -1) out[a.slice(2, eq)] = a.slice(eq + 1);
-      else {
-        const key = a.slice(2);
-        const next = argv[i + 1];
-        if (next && !next.startsWith("--")) { out[key] = next; i++; }
-        else out[key] = true;
-      }
+    if (!a.startsWith("-")) { if (!out.appPos) out.appPos = a; continue; }
+    if (a === "--app") {
+      const n = argv[i + 1]; if (n && !n.startsWith("-")) { out.app = n; i++; }
+      continue;
     }
+    if (a.startsWith("--app=")) { out.app = a.slice("--app=".length); continue; }
+    if (a === "--out") {
+      const n = argv[i + 1]; if (n && !n.startsWith("-")) { out.out = n; i++; }
+      continue;
+    }
+    if (a.startsWith("--out=")) { out.out = a.slice("--out=".length); continue; }
+    if (a === "--sourcemap") {
+      const n = argv[i + 1]; if (n && !n.startsWith("-") && isSourcemapMode(n)) { out.sourcemap = n; i++; }
+      continue;
+    }
+    if (a.startsWith("--sourcemap=")) {
+      const v = a.slice("--sourcemap=".length);
+      if (isSourcemapMode(v)) out.sourcemap = v as SourcemapMode;
+      continue;
+    }
+    // ignore unknown flags
   }
-  return out as {
-    app?: string; // legacy --app
-    appPos?: string; // positional
-    out?: string;
-    csr?: string; // legacy explicit client entry
-    client?: boolean; // new flag
-    minify?: string | boolean;
-    sourcemap?: string;
-  };
+  return out;
 }
 
-async function readOutputText(art: any): Promise<string> {
-  if (typeof art.text === "function") return await art.text();
+async function readOutputText(art: OutputReadable): Promise<string> {
+  if (typeof art.text === "function") {
+    // Call as a method to preserve internal this binding
+    const t: string = await art.text();
+    return t;
+  }
   if (typeof art.arrayBuffer === "function") {
     const ab: ArrayBuffer = await art.arrayBuffer();
     return new TextDecoder().decode(new Uint8Array(ab));
@@ -47,35 +70,46 @@ async function readOutputText(art: any): Promise<string> {
   return String(t ?? "");
 }
 
-function injectCSR(html: string, hasCss: boolean, csrOnly = false): string {
+function injectCSR(html: string, hasCss: boolean): string {
   return injectHtmlAssets(html, {
-    // Build output is static; no HMR here
     hmr: { enabled: false },
     csr: {
       scriptSrc: "./app.mjs",
       cssHref: hasCss ? "./app.css" : undefined,
-      csrOnly,
     },
   });
+}
+
+interface HeadCssProvider {
+  headCss?: string[] | (() => string[]);
+}
+
+function getHeadCssFromRoot(root: object | null | undefined): string[] {
+  if (!root || typeof root !== "object") return [];
+  const prop = (root as HeadCssProvider).headCss;
+  if (Array.isArray(prop) && prop.every((x) => typeof x === "string")) return prop;
+  if (typeof prop === "function") {
+    try {
+      const out = prop();
+      if (Array.isArray(out) && out.every((x) => typeof x === "string")) return out;
+    } catch {}
+  }
+  return [];
 }
 
 export async function runFeBuild(argv: string[] = Bun.argv) {
   const args = parseArgs(argv);
   const appSpec = args.appPos || args.app;
   if (!appSpec) {
-    console.error("Usage: hipst build <AppFilePath[#Export]> [--client] [--out <dir>] [--minify true|false] [--sourcemap external|inline|none]  (alias: fe-build)\n\nNotes: --client builds CSR-only HTML; default builds SSR HTML + CSR assets. Legacy --app/--csr are supported.");
+    console.error("Usage: hipst build <AppFilePath> [--out <dir>] [--sourcemap external|inline|none]  (alias: fe-build)\n\nNotes: Builds SSR HTML and CSR assets; client runtime is always included.");
     process.exit(1);
   }
-  const [appPathRaw, exportName] = String(appSpec!).split("#") as [string, string?];
+  const appPathRaw = String(appSpec!);
   const appPath = resolve(process.cwd(), appPathRaw);
   const mod = await import(appPath);
-  const root = exportName ? mod[exportName] : (mod.default ?? mod.App);
-  if (args.client && exportName && exportName !== "default") {
-    console.error("--client requires the app to be exported as default (no #Export override).");
-    process.exit(1);
-  }
+  const root = (mod.default ?? mod.App);
   if (!root) {
-    console.error(`Could not find export '${exportName || "default|App"}' in ${appPath}`);
+    console.error(`Could not resolve UI root (expected default export or 'App') in ${appPath}`);
     process.exit(1);
   }
 
@@ -84,49 +118,13 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
   const outDir = resolve(process.cwd(), String(args.out || "dist/fe"));
   mkdirSync(outDir, { recursive: true });
 
-  // Build path selection
-  const sourcemap = (args.sourcemap ?? "external") as "external" | "inline" | "none";
-  const minify = args.minify === undefined ? true : String(args.minify) !== "false";
+  // Build path selection: always auto mode, minified
+  const sourcemap: SourcemapMode = args.sourcemap ?? "external";
+  const bunSourcemap: boolean | "external" | "inline" = sourcemap === "none" ? false : sourcemap;
 
-  const explicitEntry = args.csr ? resolve(process.cwd(), String(args.csr)) : undefined;
-  if (explicitEntry) {
-    // Legacy/explicit path: build single bundle
-    const out = await Bun.build({ entrypoints: [explicitEntry], target: "browser", format: "esm", sourcemap: sourcemap as any, minify });
-    if (!out.success) {
-      console.error("hipst build: CSR build failed", out);
-    } else {
-      let js: string | undefined;
-      let css: string | undefined;
-      let jsMap: string | undefined;
-      let cssMap: string | undefined;
-      for (const art of out.outputs) {
-        const p = art.path.toLowerCase();
-        if (p.endsWith(".js") || p.endsWith(".mjs")) js = await readOutputText(art);
-        else if (p.endsWith(".css")) css = await readOutputText(art);
-        else if (p.endsWith(".map")) {
-          const m = await readOutputText(art);
-          try {
-            const json = JSON.parse(m);
-            const f = String(json.file || "");
-            if (f.endsWith(".css")) cssMap = m; else jsMap = m;
-          } catch { jsMap = m; }
-        }
-      }
-      if (js) {
-        js = js.replace(/\/# sourceMappingURL=.*$/m, '//# sourceMappingURL=app.mjs.map');
-        writeFileSync(resolve(outDir, "app.mjs"), js, "utf-8");
-      }
-      if (jsMap) writeFileSync(resolve(outDir, "app.mjs.map"), jsMap, "utf-8");
-      if (css) {
-        css = css.replace(/\/*# sourceMappingURL=.*\*\//m, '/*# sourceMappingURL=app.css.map */');
-        writeFileSync(resolve(outDir, "app.css"), css, "utf-8");
-      }
-      if (cssMap) writeFileSync(resolve(outDir, "app.css.map"), cssMap, "utf-8");
-      html = injectCSR(html, !!css, !!args.client);
-    }
-  } else {
-    // Auto mode: build UI module and runtime separately, concatenate CSS, emit wrapper
-    const entryOut = await Bun.build({ entrypoints: [appPath], target: "browser", format: "esm", sourcemap: sourcemap as any, minify });
+  // Auto mode: build UI module and runtime separately, concatenate CSS, emit wrapper
+  {
+    const entryOut = await Bun.build({ entrypoints: [appPath], target: "browser", format: "esm", sourcemap: bunSourcemap, minify: true });
     if (!entryOut.success) {
       console.error("hipst build: UI entry build failed", entryOut);
       process.exit(1);
@@ -144,7 +142,7 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
     if (!(await Bun.file(runtimePath).exists())) {
       runtimePath = new URL("../core/ui/runtime.js", import.meta.url).pathname;
     }
-    const runtimeOut = await Bun.build({ entrypoints: [runtimePath], target: "browser", format: "esm", sourcemap: sourcemap as any, minify });
+    const runtimeOut = await Bun.build({ entrypoints: [runtimePath], target: "browser", format: "esm", sourcemap: bunSourcemap, minify: true });
     if (!runtimeOut.success) {
       console.error("hipst build: runtime build failed", runtimeOut);
       process.exit(1);
@@ -159,12 +157,9 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
 
     // Collect CSS from HtmlRoot
     const cssList: string[] = [];
-    const r: any = root as any;
-    const headCss: string[] | undefined = r && typeof r === "object" && Array.isArray(r.headCss) ? r.headCss : (typeof r?.headCss === "function" ? r.headCss() : undefined);
-    if (Array.isArray(headCss)) {
-      for (const css of headCss) {
-        if (typeof css === "string" && css) cssList.push(resolve(process.cwd(), css));
-      }
+    const headCss = getHeadCssFromRoot(root);
+    for (const css of headCss) {
+      if (css) cssList.push(resolve(process.cwd(), css));
     }
     let cssCombined = "";
     for (const p of cssList) {
@@ -188,13 +183,13 @@ export async function runFeBuild(argv: string[] = Bun.argv) {
     const wrapper = `// auto wrapper (fe-build)
 import { mount } from "./runtime.mjs";
 import * as Mod from "./app.entry.mjs";
-const Root = ${exportName ? `Mod[${JSON.stringify(exportName)}]` : `(Mod as any).default ?? (Mod as any).App`};
+const Root = Mod.default ?? Mod.App;
 const el = document.getElementById("__hipst_app__");
 if (el && Root) mount(Root, el);
 `;
     writeFileSync(resolve(outDir, "app.mjs"), wrapper, "utf-8");
 
-    html = injectCSR(html, !!cssCombined, !!args.client);
+    html = injectCSR(html, !!cssCombined);
   }
 
   const htmlPath = resolve(outDir, "index.html");

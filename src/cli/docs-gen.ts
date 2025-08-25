@@ -4,6 +4,16 @@ import { resolve } from "node:path";
 
 export type MethodName = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
+export interface JsonSchema {
+  type?: "string" | "number" | "boolean" | "integer" | "null" | "undefined" | "object" | "array" | "unknown" | "any";
+  enum?: Array<string | number>;
+  anyOf?: JsonSchema[];
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  items?: JsonSchema;
+  prefixItems?: JsonSchema[];
+}
+
 export type GeneratedMethodDoc = {
   path?: string;
   method: MethodName;
@@ -12,10 +22,10 @@ export type GeneratedMethodDoc = {
   line: number;
   column: number;
   schema?: {
-    query?: any;
-    params?: any;
-    body?: any;
-    res?: any;
+    query?: JsonSchema;
+    params?: JsonSchema;
+    body?: JsonSchema;
+    res?: JsonSchema;
   };
 };
 
@@ -50,7 +60,8 @@ function tryFindApiBasePath(node: ts.Node): string | undefined {
         const firstArg = cur.arguments[0];
         if (firstArg && ts.isStringLiteralLike(firstArg)) return firstArg.text;
       }
-      cur = (cur.expression as any) || cur.parent;
+      // Dive into the callee expression to continue walking
+      cur = cur.expression;
       continue;
     }
     if (ts.isPropertyAccessExpression(cur)) {
@@ -66,7 +77,7 @@ function tryFindApiBasePath(node: ts.Node): string | undefined {
 function extractDocsFromSource(sf: ts.SourceFile, checker: ts.TypeChecker): GeneratedMethodDoc[] {
   const out: GeneratedMethodDoc[] = [];
 
-  function typeToSchema(type: ts.Type, depth = 0): any {
+  function typeToSchema(type: ts.Type, depth = 0): JsonSchema {
     if (depth > 5) return { type: "any" };
     // Prefer original flags to detect primitives before using apparent wrapper types
     const f0 = type.flags;
@@ -82,37 +93,38 @@ function extractDocsFromSource(sf: ts.SourceFile, checker: ts.TypeChecker): Gene
     // Unions (based on original type)
     if (f0 & ts.TypeFlags.Union) {
       const ut = type as ts.UnionType;
-      const lits: any[] = [];
-      const others: any[] = [];
+      const litValues: Array<string | number> = [];
+      const otherSchemas: JsonSchema[] = [];
       for (const m of ut.types) {
         const mf = m.flags;
-        if (mf & ts.TypeFlags.StringLiteral) lits.push((m as any).value);
-        else if (mf & ts.TypeFlags.NumberLiteral) lits.push((m as any).value);
-        else others.push(typeToSchema(m, depth + 1));
+        if (mf & ts.TypeFlags.StringLiteral) litValues.push((m as ts.StringLiteralType).value);
+        else if (mf & ts.TypeFlags.NumberLiteral) litValues.push((m as ts.NumberLiteralType).value);
+        else otherSchemas.push(typeToSchema(m, depth + 1));
       }
-      if (lits.length && !others.length) return { enum: lits };
-      return { anyOf: [...(lits.length ? [{ enum: lits }] : []), ...others] };
+      if (litValues.length && !otherSchemas.length) return { enum: litValues };
+      return { anyOf: [...(litValues.length ? [{ enum: litValues } as JsonSchema] : []), ...otherSchemas] };
     }
 
     const t = checker.getApparentType(type);
     // Array<T>
     if (checker.isArrayType?.(t)) {
       const tr = t as ts.TypeReference;
-      const args = checker.getTypeArguments?.(tr) || [];
+      const args: readonly ts.Type[] = checker.getTypeArguments ? checker.getTypeArguments(tr) : [];
       return { type: "array", items: args[0] ? typeToSchema(args[0], depth + 1) : { type: "any" } };
     }
 
     // Tuple
     if (checker.isTupleType?.(t)) {
       const tt = t as ts.TupleType;
-      const e = (checker.getTypeArguments?.(tt as any) || []) as ts.Type[];
+      const getArgs = checker.getTypeArguments as ((type: ts.TypeReference) => readonly ts.Type[]) | undefined;
+      const e: readonly ts.Type[] = getArgs ? getArgs(tt as ts.TypeReference) : [];
       return { type: "array", prefixItems: e.map((x) => typeToSchema(x, depth + 1)) };
     }
 
     // Object
     const props = checker.getPropertiesOfType(t);
-    if (props.length > 0 || (t as any).objectFlags) {
-      const properties: Record<string, any> = {};
+    if (props.length > 0 || (t.flags & ts.TypeFlags.Object) !== 0) {
+      const properties: Record<string, JsonSchema> = {};
       const required: string[] = [];
       for (const p of props) {
         const decl = p.valueDeclaration || p.declarations?.[0] || sf;
@@ -120,14 +132,13 @@ function extractDocsFromSource(sf: ts.SourceFile, checker: ts.TypeChecker): Gene
         properties[p.getName()] = typeToSchema(pt, depth + 1);
         if (!(p.flags & ts.SymbolFlags.Optional)) required.push(p.getName());
       }
-      const out: any = { type: "object", properties };
-      if (required.length) out.required = required;
-      return out;
+      const objSchema: JsonSchema = { type: "object", properties };
+      if (required.length) objSchema.required = required;
+      return objSchema;
     }
 
     // Fallback display name
-    const name = checker.typeToString(t);
-    return { type: name || "any" };
+    return { type: "unknown" };
   }
 
   function getPropTypeFromType(objType: ts.Type, prop: string): ts.Type | undefined {
@@ -137,12 +148,12 @@ function extractDocsFromSource(sf: ts.SourceFile, checker: ts.TypeChecker): Gene
     return checker.getTypeOfSymbolAtLocation(s, decl);
   }
 
-  function schemaFromSpecType(specType: ts.Type): { query?: any; params?: any; body?: any; res?: any } {
+  function schemaFromSpecType(specType: ts.Type): { query?: JsonSchema; params?: JsonSchema; body?: JsonSchema; res?: JsonSchema } {
     const queryT = getPropTypeFromType(specType, "query");
     const paramsT = getPropTypeFromType(specType, "params");
     const bodyT = getPropTypeFromType(specType, "body");
     const resT = getPropTypeFromType(specType, "res");
-    const schema: any = {};
+    const schema: { query?: JsonSchema; params?: JsonSchema; body?: JsonSchema; res?: JsonSchema } = {};
     if (queryT) schema.query = typeToSchema(queryT);
     if (paramsT) schema.params = typeToSchema(paramsT);
     if (bodyT) schema.body = typeToSchema(bodyT);
@@ -150,9 +161,9 @@ function extractDocsFromSource(sf: ts.SourceFile, checker: ts.TypeChecker): Gene
     return schema;
   }
 
-  function tryInferFromHandler(handler: ts.ArrowFunction | ts.FunctionExpression): { query?: any; params?: any; body?: any; res?: any } | undefined {
+  function tryInferFromHandler(handler: ts.ArrowFunction | ts.FunctionExpression): { query?: JsonSchema; params?: JsonSchema; body?: JsonSchema; res?: JsonSchema } | undefined {
     try {
-      const schema: any = {};
+      const schema: { query?: JsonSchema; params?: JsonSchema; body?: JsonSchema; res?: JsonSchema } = {};
       // Param could be identifier or object binding pattern
       if (handler.parameters.length > 0) {
         const p0 = handler.parameters[0]!;
@@ -169,11 +180,13 @@ function extractDocsFromSource(sf: ts.SourceFile, checker: ts.TypeChecker): Gene
           // If destructured parameter provides a local identifier named 'res'
           if (ts.isObjectBindingPattern(p0.name)) {
             for (const el of p0.name.elements) {
-              const n = (el.name as ts.Identifier).text;
-              const pn = el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : n;
-              if (pn === "res") {
-                const sym = checker.getSymbolAtLocation(el.name);
-                if (sym) return sym;
+              if (ts.isIdentifier(el.name)) {
+                const n = el.name.text;
+                const pn = el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : n;
+                if (pn === "res") {
+                  const sym = checker.getSymbolAtLocation(el.name);
+                  if (sym) return sym;
+                }
               }
             }
           }

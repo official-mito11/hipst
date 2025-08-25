@@ -8,26 +8,22 @@ function usage() {
 Hipst CLI
 
 Usage:
-  hipst serve <AppFilePath[#Export]> [options]
-    --csr                 Use CSR-only (no SSR body)
+  hipst serve <ServerFilePath> [options]
     --port, -p <number>   Port
     --watch, -w           Hot reload (HMR)
 
-  hipst build <AppFilePath[#Export]> [options]
-    --client              Build as FE client (default builds SSR HTML + CSR assets)
+  hipst build <AppFilePath> [options]
     --full                Integrated build: FE assets, compile-time docs, server runner
     --out <dir>           Output dir (default: dist/fe)
-    --minify <bool>       Minify (default: true)
     --sourcemap <mode>    external|inline|none (default: external)
 
-  hipst full-build <AppFilePath[#Export]> [options]
-    --api <ApiFile[#Export]>   Optional legacy API module to include
+  hipst full-build <AppFilePath> [options]
+    --api <ApiFile>            Optional legacy API module to include
     --out <dir>                Output dir (default: dist/full)
-    --minify <bool>            Minify (default: true)
     --sourcemap <mode>         external|inline|none (default: external)
 
   Notes:
-    - Legacy flags are still supported: serve --ui/--api ..., build --app ...
+    - Legacy flags are parsed but deprecated: serve --ui/--api ..., build --app ...
   `);
 }
 

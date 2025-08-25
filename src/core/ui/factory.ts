@@ -53,6 +53,8 @@ export function ui<K extends keyof SVGElementTagNameMap>(tag: K): WithCallable<U
 export function ui<Tag extends string>(tag: Tag): WithCallable<UIComponent<Tag>>;
 export function ui(tag: string): WithCallable<UIComponent<string>> {
   const base = new UIComponent<string>(tag as string);
+  // Capture definition module path for auto CSR synthesis on the server
+  try { (base as any).__hipst_module__ = new URL(import.meta.url).pathname; } catch {}
   const callable = toCallable<UIComponent<string>, any[], UIComponent<string>>(base, (self, ...children: any[]) => {
     const kids = flatten(children);
     (self as UIComponent<any>).append(...kids as any);
@@ -65,6 +67,8 @@ export function ui(tag: string): WithCallable<UIComponent<string>> {
 
 export function html(): WithCallable<HtmlRoot> {
   const base = new HtmlRoot();
+  // Capture definition module path for auto CSR synthesis on the server
+  try { (base as any).__hipst_module__ = new URL(import.meta.url).pathname; } catch {}
   const callable = toCallable<HtmlRoot, any[], HtmlRoot>(base, (self, ...children: any[]) => {
     const kids = flatten(children);
     (self as UIComponent<any>).append(...kids as any);

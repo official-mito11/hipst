@@ -18,12 +18,12 @@ function camelToKebab(s: string) {
 }
 
 type StyleValue = string | number | boolean | ((c: UIContext<UIComponent<any, any>>) => string | number | boolean);
-interface HasStylesStore { _stylesStore?: Record<string, StyleValue> }
+type PrivateSlots = { [k: string]: Record<string, StyleValue> | undefined };
 
 function styleToString(comp: UIComponent<any, any>, ctx: UIContext<UIComponent<any, any>>): string {
   const parts: string[] = [];
   // Use internal styles store with a safe fallback to the public styles getter
-  const storeFromPrivate = (comp as HasStylesStore)._stylesStore;
+  const storeFromPrivate = (comp as object as PrivateSlots)["_stylesStore"];
   const publicStyles = comp.styles as Record<string, StyleValue>;
   const rawStyles: Record<string, StyleValue> = storeFromPrivate ?? publicStyles ?? {};
   for (const key of Object.keys(rawStyles)) {

@@ -10,22 +10,16 @@ bun install
 - Serve an app (SSR by default, CSR auto-injected when needed):
 
 ```bash
-bun run hipst serve examples/counter.app.ts#App --port 3000
+bun run hipst serve examples/counter.ts --port 3000
 ```
 
 - Build static output (SSR HTML + CSR assets by default):
 
 ```bash
-bun run hipst build examples/counter.app.ts#App --out dist/counter-fe
+bun run hipst build examples/counter.app.ts --out dist/counter-fe
 ```
 
-- CSR-only build (no SSR body; client mounts into an empty container):
-
-```bash
-bun run hipst build examples/counter.app.ts --client --out dist/counter-fe-client
-```
-
-Note: `--client` requires the app to be exported as default (do not specify `#Export`).
+<!-- CSR-only mode has been removed; builds always include SSR HTML and client runtime. -->
 
 - Minimal app example:
 
@@ -56,5 +50,5 @@ export const hello = api("/hello").get(({ res }) => res({ ok: true }));
 - Serve both UI and API (legacy flags still supported):
 
 ```bash
-bun run hipst serve app.ts#App --api api.ts#hello --port 3000
+bun run hipst serve app.ts --port 3000
 ```

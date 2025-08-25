@@ -3,21 +3,21 @@ import { resolve } from "node:path";
 import { watch } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-function parseArgs(argv: string[]) {
-  const out: {
-    app?: string; // positional path[#export]
-    ui?: string; // legacy
-    api?: string; // legacy
-    csrOnly?: boolean; // --csr
-    watch?: boolean; // -w/--watch
-    port?: string; // -p/--port
-  } = {} as any;
+type ServeArgs = {
+  app?: string; // positional path[#export]
+  ui?: string; // legacy
+  api?: string; // legacy
+  watch?: boolean; // -w/--watch
+  port?: string; // -p/--port
+};
+
+function parseArgs(argv: string[]): ServeArgs {
+  const out: ServeArgs = {};
 
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--") break;
     if (a === "--watch" || a === "-w") { out.watch = true; continue; }
-    if (a === "--csr") { out.csrOnly = true; continue; }
     if (a.startsWith("--port=")) { out.port = a.slice("--port=".length); continue; }
     if (a === "--port" || a === "-p") {
       const n = argv[i + 1];
@@ -42,11 +42,10 @@ export async function runServe(argv: string[] = Bun.argv) {
   const cwd = process.cwd();
   const uiSpec = args.app || args.ui; // prefer positional (legacy --ui kept for compat)
   if (!uiSpec) {
-    console.error("Usage: hipst serve <ServerFilePath[#Export]> [--port|-p <number>] [--watch|-w]");
+    console.error("Usage: hipst serve <ServerFilePath> [--port|-p <number>] [--watch|-w]");
     process.exit(1);
   }
-  const [p, ex] = String(uiSpec).split("#") as [string, string?];
-  const abs = resolve(cwd, p);
+  const abs = resolve(cwd, String(uiSpec));
   // Helper: import with cache-busting for HMR
   let bust = 0;
   const importFresh = async (p: string) => {
@@ -56,9 +55,9 @@ export async function runServe(argv: string[] = Bun.argv) {
   };
 
   const mod = await importFresh(abs);
-  const exported = ex ? mod[ex] : (mod.default);
+  const exported = mod.default;
   if (!exported) {
-    console.error(`Could not find export '${ex || "default"}' in ${abs}`);
+    console.error(`Could not find default export in ${abs}`);
     process.exit(1);
   }
   // Accept only a Server instance (server component). FE root is not served here.
@@ -85,12 +84,12 @@ export async function runServe(argv: string[] = Bun.argv) {
     const restart = async () => {
       try {
         // Notify clients to reload before restarting
-        try { (s as any).hmrBroadcast?.(); } catch {}
+        try { s.hmrBroadcast(); } catch {}
         // Close current server
         try { s.close(); } catch {}
         // Re-import module fresh
         const mod = await importFresh(abs);
-        const next = ex ? mod[ex] : (mod.default);
+        const next = mod.default;
         if (!(next instanceof Server)) {
           console.error(`[watch] export is not a Server instance after reload. Skipping restart.`);
           return;

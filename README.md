@@ -1,5 +1,7 @@
 # Hipst
 
+**This project is not ready for production use. Please use with caution. Official release is expected in December 2025.**
+
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-Explore-blue)](https://deepwiki.com/official-mito11/hipst)
 
 <p align="center">

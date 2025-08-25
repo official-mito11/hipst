@@ -24,7 +24,6 @@ export class Server<L extends object = {}> extends Component {
   private csrEnabled = false;
   private csrEntry?: string;
   private csrAutoSpec?: { modulePath: string; exportName?: string };
-  private csrOnlyMode = false;
   private csrBuilt?: {
     js: string; // wrapper or explicit bundle
     entry?: string; // bundled UI module (when auto)
@@ -42,9 +41,17 @@ export class Server<L extends object = {}> extends Component {
   }
 
   route(node: ApiComponent<any> | HtmlRoot | UIComponent): this {
-    if (node instanceof ApiComponent) this.apis.push(node);
-    else {
+    if (node instanceof ApiComponent) {
+      this.apis.push(node);
+    } else {
       this.uiRoot = node as any;
+      // Auto-enable CSR from the UI module if available
+      try {
+        const modPath = (node as unknown as { __hipst_module__?: string }).__hipst_module__;
+        if (!this.csrEnabled && typeof modPath === "string" && modPath.length > 0) {
+          this.csrAutoFrom(modPath);
+        }
+      } catch {}
     }
     return this;
   }
@@ -104,12 +111,7 @@ export class Server<L extends object = {}> extends Component {
     return this;
   }
 
-  /** Enable CSR-only mode (no SSR body content). */
-  csrOnly(): this {
-    this.csrEnabled = true;
-    this.csrOnlyMode = true;
-    return this;
-  }
+  // CSR-only mode removed: SSR body is always preserved and wrapped for hydration.
 
   /** Use CSR assets from a prebuilt directory. Files expected: app.mjs, app.entry.mjs, runtime.mjs, app.css, and optional .map files. */
   csrServeFromDir(dir: string): this {
@@ -285,13 +287,12 @@ if (el && Root) mount(Root, el);
     };
   }
 
-  private injectCSR(html: string, emptyBody = false): string {
+  private injectCSR(html: string): string {
     return injectHtmlAssets(html, {
       hmr: { enabled: this.hmrEnabled, eventPath: "/_hipst/hmr" },
       csr: this.csrEnabled ? {
         scriptSrc: "/_hipst/app.mjs",
         cssHref: "/_hipst/app.css",
-        csrOnly: emptyBody,
       } : undefined,
     });
   }
@@ -535,7 +536,7 @@ if (el && Root) mount(Root, el);
         // UI fallback for GET
         if (req.method === "GET" && this.uiRoot) {
           let html = renderToString(this.uiRoot);
-          html = this.injectCSR(html, this.csrOnlyMode);
+          html = this.injectCSR(html);
           return new Response(html, {
             status: 200,
             headers: { "Content-Type": "text/html; charset=utf-8" },

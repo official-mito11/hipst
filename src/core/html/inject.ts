@@ -14,8 +14,6 @@ export interface CsrOptions {
   scriptSrc: string;
   /** Optional CSS href to include as <link rel="stylesheet"> */
   cssHref?: string;
-  /** If true, replace body content with empty mount container + script (CSR-only) */
-  csrOnly?: boolean;
 }
 
 export interface InjectOptions {
@@ -26,7 +24,7 @@ export interface InjectOptions {
 /**
  * Injects CSR and/or HMR tags into given HTML.
  * - Adds link/script into head/body as needed.
- * - When csr.csrOnly is true, removes body contents and emits only the mount div + script.
+ * - Always preserves SSR content by wrapping it in the mount container and appending the client script.
  */
 export function injectHtmlAssets(htmlIn: string, opts: InjectOptions): string {
   let html = htmlIn;
@@ -50,16 +48,9 @@ export function injectHtmlAssets(htmlIn: string, opts: InjectOptions): string {
   // CSR body injection
   if (opts.csr) {
     const scriptTag = `<script type="module" src="${escapeHtmlAttr(opts.csr.scriptSrc)}"></script>`;
-    if (opts.csr.csrOnly) {
-      html = html.replace(
-        /<body(\s*[^>]*)>.*?<\/body>/is,
-        (_m, g1: string) => `<body${g1}><div id="__hipst_app__"></div>${scriptTag}</body>`
-      );
-    } else {
-      // Wrap existing SSR content within mount container then append script before </body>
-      html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
-      html = html.replace(/<\/body>/i, `</div>${scriptTag}</body>`);
-    }
+    // Wrap existing SSR content within mount container then append script before </body>
+    html = html.replace(/<body(\s*[^>]*)>/i, (m) => m + '<div id="__hipst_app__">');
+    html = html.replace(/<\/body>/i, `</div>${scriptTag}</body>`);
   }
 
   return html;
